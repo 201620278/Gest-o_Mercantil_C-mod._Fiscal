@@ -1,0 +1,207 @@
+// Rotas para contas a receber (parcelas de vendas a prazo)
+const express = require('express');
+const router = express.Router();
+const db = require('../database');
+const moment = require('moment');
+
+// Listar contas a receber em aberto
+router.get('/em-aberto', (req, res) => {
+  db.all(`
+    SELECT cr.*, c.nome as cliente_nome, v.codigo as venda_codigo
+    FROM contas_receber cr
+    LEFT JOIN clientes c ON cr.cliente_id = c.id
+    LEFT JOIN vendas v ON cr.venda_id = v.id
+    WHERE cr.status = 'aberto'
+    ORDER BY cr.data_vencimento ASC
+  `, (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+// Listar contas vencidas
+router.get('/vencidas', (req, res) => {
+  const hoje = moment().format('YYYY-MM-DD');
+  db.all(`
+    SELECT cr.*, c.nome as cliente_nome, v.codigo as venda_codigo
+    FROM contas_receber cr
+    LEFT JOIN clientes c ON cr.cliente_id = c.id
+    LEFT JOIN vendas v ON cr.venda_id = v.id
+    WHERE cr.status = 'aberto' AND cr.data_vencimento < ?
+    ORDER BY cr.data_vencimento ASC
+  `, [hoje], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+// Histórico de vendas a prazo de um cliente
+router.get('/historico/:cliente_id', (req, res) => {
+  const { cliente_id } = req.params;
+  db.all(`
+    SELECT cr.*, v.codigo as venda_codigo
+    FROM contas_receber cr
+    LEFT JOIN vendas v ON cr.venda_id = v.id
+    WHERE cr.cliente_id = ?
+    ORDER BY cr.data_vencimento DESC
+  `, [cliente_id], (err, rows) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(rows);
+  });
+});
+
+// Verificar débitos em aberto e vencidos de um cliente
+router.get('/verificar/:cliente_id', (req, res) => {
+  const { cliente_id } = req.params;
+  const hoje = moment().format('YYYY-MM-DD');
+  db.get(`
+    SELECT 
+      SUM(CASE WHEN status = 'aberto' THEN valor_restante ELSE 0 END) as total_em_aberto,
+      COUNT(CASE WHEN status = 'aberto' AND data_vencimento < ? THEN 1 END) as parcelas_vencidas
+    FROM contas_receber
+    WHERE cliente_id = ?
+  `, [hoje, cliente_id], (err, row) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+    res.json(row);
+  });
+});
+
+// Registrar pagamento de parcela
+router.post('/pagar/:id', (req, res) => {
+  const { id } = req.params;
+  const { valor_pago, data_pagamento, forma_pagamento } = req.body;
+  const valorNum = Number(valor_pago);
+  const data = data_pagamento || moment().format('YYYY-MM-DD');
+
+  if (Number.isNaN(valorNum) || valorNum <= 0) {
+    res.status(400).json({ error: 'Informe um valor pago válido.' });
+    return;
+  }
+
+  db.get(
+    `
+      SELECT cr.*, c.nome as cliente_nome, v.codigo as venda_codigo
+      FROM contas_receber cr
+      LEFT JOIN clientes c ON cr.cliente_id = c.id
+      LEFT JOIN vendas v ON cr.venda_id = v.id
+      WHERE cr.id = ?
+    `,
+    [id],
+    (err, conta) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      if (!conta) {
+        res.status(404).json({ error: 'Parcela não encontrada.' });
+        return;
+      }
+      if (conta.status !== 'aberto') {
+        res.status(400).json({ error: 'Apenas parcelas em aberto podem receber pagamento.' });
+        return;
+      }
+
+      const restante = Number(conta.valor_restante);
+      if (valorNum > restante) {
+        res.status(400).json({ error: 'O valor pago não pode ser maior que o valor restante.' });
+        return;
+      }
+
+      db.serialize(() => {
+        db.run('BEGIN TRANSACTION');
+
+        db.run(
+          `
+            UPDATE contas_receber
+            SET
+              valor_restante = valor_restante - ?,
+              status = CASE WHEN (valor_restante - ?) <= 0 THEN 'pago' ELSE 'aberto' END,
+              data_pagamento = ?
+            WHERE id = ?
+          `,
+          [valorNum, valorNum, data, id],
+          function(upErr) {
+            if (upErr) {
+              db.run('ROLLBACK');
+              res.status(500).json({ error: upErr.message });
+              return;
+            }
+
+            db.run(
+              `
+                INSERT INTO financeiro (tipo, descricao, valor, data_movimento, categoria, forma_pagamento, referencia_id, referencia_tipo)
+                VALUES ('receita', ?, ?, ?, 'contas_receber', ?, ?, 'conta_receber')
+              `,
+              [
+                `Recebimento parcela ${conta.numero_parcela}/${conta.total_parcelas} - Venda ${conta.venda_codigo || conta.venda_id || '-'}`,
+                valorNum,
+                data,
+                forma_pagamento || null,
+                id
+              ],
+              (finErr) => {
+                if (finErr) {
+                  db.run('ROLLBACK');
+                  res.status(500).json({ error: finErr.message });
+                  return;
+                }
+
+                if (conta.cliente_id) {
+                  db.run(
+                    `
+                      UPDATE clientes
+                      SET credito_atual = CASE
+                        WHEN (credito_atual - ?) < 0 THEN 0
+                        ELSE credito_atual - ?
+                      END
+                      WHERE id = ?
+                    `,
+                    [valorNum, valorNum, conta.cliente_id],
+                    (credErr) => {
+                      if (credErr) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: credErr.message });
+                        return;
+                      }
+                      db.run('COMMIT');
+                      res.json({
+                        message: 'Pagamento registrado',
+                        id,
+                        valor_pago: valorNum,
+                        valor_restante_anterior: restante,
+                        valor_restante_novo: restante - valorNum
+                      });
+                    }
+                  );
+                } else {
+                  db.run('COMMIT');
+                  res.json({
+                    message: 'Pagamento registrado',
+                    id,
+                    valor_pago: valorNum,
+                    valor_restante_anterior: restante,
+                    valor_restante_novo: restante - valorNum
+                  });
+                }
+              }
+            );
+          }
+        );
+      });
+    }
+  );
+});
+
+module.exports = router;
