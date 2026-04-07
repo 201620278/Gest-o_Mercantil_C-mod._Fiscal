@@ -590,6 +590,17 @@ function finalizarVenda() {
         desconto: desconto,
         forma_pagamento: formaPagamentoSelecionada
     };
+
+    const produtosSemFiscal = carrinho.filter(item => {
+        const produto = produtosDisponiveis.find(p => p.id === item.id);
+        return produto && (!produto.ncm || String(produto.ncm).trim() === '' || !produto.csosn || String(produto.csosn).trim() === '');
+    });
+
+    if (produtosSemFiscal.length > 0) {
+        const nomes = produtosSemFiscal.map(item => item.nome || item.id).join(', ');
+        showNotification(`Produtos sem NCM/CSOSN: ${nomes}. Atualize o cadastro antes de vender.`, 'danger');
+        return;
+    }
     
     if (formaPagamentoSelecionada === 'prazo' && vendaPrazoInfo) {
         venda.cliente_id = vendaPrazoInfo.cliente_id;
@@ -609,24 +620,45 @@ function finalizarVenda() {
             data: JSON.stringify(dados),
             success: function(response) {
                 showNotification(`Venda finalizada! Código: ${response.codigo}`, 'success');
-                if (confirm('Deseja imprimir o cupom fiscal?')) {
-                    imprimirCupomPDV(response.id, dados, total, desconto);
-                }
-                
-                // Resetar estado
-                carrinho = [];
-                formaPagamentoSelecionada = null;
-                vendaPrazoInfo = null;
-                $('#desconto').val(0);
-                atualizarCarrinho();
-                
-                // Recarregar produtos para atualizar estoque
-                $.ajax({
-                    url: `${API_URL}/produtos`,
-                    method: 'GET',
-                    success: function(produtos) {
-                        produtosDisponiveis = produtos;
+                const vendaId = response.id;
+
+                mostrarConfirmacaoFiscal(vendaId, function(emissaoFiscal) {
+                    if (emissaoFiscal) {
+                        $.ajax({
+                            url: `${API_URL}/fiscal/nfce/emitir/${vendaId}`,
+                            method: 'POST',
+                            success: function(nota) {
+                                showNotification('NFC-e emitida com sucesso!');
+                                console.log('Nota emitida:', nota);
+                                if (nota.danfe_url) {
+                                    window.open(nota.danfe_url, '_blank');
+                                }
+                            },
+                            error: function(xhr) {
+                                console.error(xhr);
+                                showNotification('Venda salva, mas houve erro na emissão fiscal.', 'warning');
+                            }
+                        });
+                    } else {
+                        imprimirCupomPDV(response.id, dados, total, desconto);
+                        showNotification('Venda salva como não fiscal. Cupom não fiscal impresso.', 'info');
                     }
+
+                    // Resetar estado
+                    carrinho = [];
+                    formaPagamentoSelecionada = null;
+                    vendaPrazoInfo = null;
+                    $('#desconto').val(0);
+                    atualizarCarrinho();
+                    
+                    // Recarregar produtos para atualizar estoque
+                    $.ajax({
+                        url: `${API_URL}/produtos`,
+                        method: 'GET',
+                        success: function(produtos) {
+                            produtosDisponiveis = produtos;
+                        }
+                    });
                 });
             },
             error: function(xhr) {
@@ -687,6 +719,56 @@ function finalizarVenda() {
     }
     
     enviarVenda(venda);
+}
+
+function mostrarConfirmacaoFiscal(vendaId, callback) {
+    const modalId = 'modalConfirmacaoFiscal';
+    if ($(`#${modalId}`).length) return;
+
+    const modalHtml = `
+        <div class="modal fade" id="${modalId}" tabindex="-1" aria-labelledby="${modalId}Label" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" id="${modalId}Label">Confirmação Fiscal</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                    </div>
+                    <div class="modal-body text-center">
+                        <p>Deseja emitir cupom fiscal (NFC-e) agora?</p>
+                    </div>
+                    <div class="modal-footer justify-content-center">
+                        <button type="button" class="btn btn-success" id="btnConfirmarFiscalSim">SIM</button>
+                        <button type="button" class="btn btn-danger" id="btnConfirmarFiscalNao">NÃO</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `;
+
+    $('#modal-container').html(modalHtml);
+    const modalElement = document.getElementById(modalId);
+    const modal = new bootstrap.Modal(modalElement, { backdrop: 'static', keyboard: false });
+    modal.show();
+
+    $('#btnConfirmarFiscalSim').off('click').on('click', function() {
+        modal.hide();
+        setTimeout(() => {
+            $(`#${modalId}`).remove();
+            callback(true);
+        }, 200);
+    });
+
+    $('#btnConfirmarFiscalNao').off('click').on('click', function() {
+        modal.hide();
+        setTimeout(() => {
+            $(`#${modalId}`).remove();
+            callback(false);
+        }, 200);
+    });
+
+    $(`#${modalId}`).on('hidden.bs.modal', function() {
+        $(`#${modalId}`).remove();
+    });
 }
 
 // Cancelar venda atual

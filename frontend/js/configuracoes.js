@@ -104,6 +104,8 @@ function renderConfiguracoes(configuracoes, usuarios) {
                 </form>
             </div>
         </div>
+
+        <div id="fiscal-config-section"></div>
         
         <div class="card mt-3">
             <div class="card-header">
@@ -135,6 +137,173 @@ function renderConfiguracoes(configuracoes, usuarios) {
     `;
     
     $('#page-content').html(html);
+    loadFiscalConfiguracao();
+}
+
+function loadFiscalConfiguracao() {
+    $.ajax({
+        url: `${API_URL}/fiscal/config`,
+        method: 'GET',
+        success: function(fiscal) {
+            renderFiscalConfiguracao(fiscal);
+        },
+        error: function() {
+            $('#fiscal-config-section').html('<div class="alert alert-danger mt-3">Erro ao carregar configuração fiscal.</div>');
+        }
+    });
+}
+
+function renderFiscalConfiguracao(fiscal) {
+    fiscal = fiscal || {};
+    const html = `
+        <div class="card mt-3">
+            <div class="card-header">
+                <button class="btn btn-link text-decoration-none p-0" type="button" data-bs-toggle="collapse" data-bs-target="#fiscalConfigSection" aria-expanded="true" aria-controls="fiscalConfigSection">
+                    <i class="fas fa-file-invoice"></i> Configuração Fiscal
+                </button>
+            </div>
+            <div id="fiscalConfigSection" class="collapse show">
+                <div class="card-body">
+                    <form id="configFiscalForm">
+                        <div class="row">
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Razão social</label>
+                                <input type="text" class="form-control" id="fiscal_razao_social" value="${escapeHtml(fiscal.razao_social || 'ESQUINAO DA ECONOMIA LTDA')}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Nome fantasia</label>
+                                <input type="text" class="form-control" id="fiscal_nome_fantasia" value="${escapeHtml(fiscal.nome_fantasia || '')}">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">CNPJ</label>
+                                <input type="text" class="form-control" id="fiscal_cnpj" value="${escapeHtml(fiscal.cnpj || '65.957.340/0001-50')}">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">IE</label>
+                                <input type="text" class="form-control" id="fiscal_ie" value="${escapeHtml(fiscal.ie || '07.325263-8')}">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">CRT</label>
+                                <input type="number" class="form-control" id="fiscal_crt" value="${escapeHtml(fiscal.crt || '1')}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">CNAE principal</label>
+                                <input type="text" class="form-control" id="fiscal_cnae_principal" value="${escapeHtml(fiscal.cnae_principal || '')}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Ambiente</label>
+                                <select class="form-control" id="fiscal_ambiente">
+                                    <option value="homologacao" ${fiscal.ambiente === 'homologacao' ? 'selected' : ''}>Homologação</option>
+                                    <option value="producao" ${fiscal.ambiente === 'producao' ? 'selected' : ''}>Produção</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">CEP</label>
+                                <input type="text" class="form-control" id="fiscal_cep" value="${escapeHtml(fiscal.cep || '')}">
+                            </div>
+                            <div class="col-md-5 mb-3">
+                                <label class="form-label">Logradouro</label>
+                                <input type="text" class="form-control" id="fiscal_logradouro" value="${escapeHtml(fiscal.logradouro || '')}">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Número</label>
+                                <input type="text" class="form-control" id="fiscal_numero" value="${escapeHtml(fiscal.numero || '')}">
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">Complemento</label>
+                                <input type="text" class="form-control" id="fiscal_complemento" value="${escapeHtml(fiscal.complemento || '')}">
+                            </div>
+                            <div class="col-md-5 mb-3">
+                                <label class="form-label">Bairro</label>
+                                <input type="text" class="form-control" id="fiscal_bairro" value="${escapeHtml(fiscal.bairro || '')}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">Município</label>
+                                <input type="text" class="form-control" id="fiscal_municipio" value="${escapeHtml(fiscal.municipio || '')}">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Código IBGE</label>
+                                <input type="text" class="form-control" id="fiscal_codigo_municipio" value="${escapeHtml(fiscal.codigo_municipio || '')}">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">UF</label>
+                                <input type="text" class="form-control" id="fiscal_uf" value="${escapeHtml(fiscal.uf || '')}">
+                            </div>
+                            <div class="col-md-2 mb-3">
+                                <label class="form-label">Série NFC-e</label>
+                                <input type="number" class="form-control" id="fiscal_serie_nfce" value="${escapeHtml(fiscal.serie_nfce || '1')}">
+                            </div>
+                            <div class="col-md-2 mb-3">
+                                <label class="form-label">Próximo número</label>
+                                <input type="number" class="form-control" id="fiscal_proximo_numero_nfce" value="${escapeHtml(fiscal.proximo_numero_nfce || '1')}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">CSC</label>
+                                <input type="text" class="form-control" id="fiscal_CSC" value="${escapeHtml(fiscal.CSC || '')}">
+                            </div>
+                            <div class="col-md-6 mb-3">
+                                <label class="form-label">ID CSC</label>
+                                <input type="text" class="form-control" id="fiscal_CSC_ID" value="${escapeHtml(fiscal.CSC_ID || '')}">
+                            </div>
+                            <div class="col-md-8 mb-3">
+                                <label class="form-label">Caminho do certificado</label>
+                                <input type="text" class="form-control" id="fiscal_certificado_path" value="${escapeHtml(fiscal.certificado_path || '')}">
+                            </div>
+                            <div class="col-md-4 mb-3">
+                                <label class="form-label">Senha do certificado</label>
+                                <input type="password" class="form-control" id="fiscal_certificado_senha" value="${escapeHtml(fiscal.certificado_senha || '')}">
+                            </div>
+                        </div>
+
+                        <button type="button" class="btn btn-primary" onclick="saveFiscalConfiguracoes()">
+                            <i class="fas fa-save"></i> Salvar Configuração Fiscal
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    `;
+    $('#fiscal-config-section').html(html);
+}
+
+function saveFiscalConfiguracoes() {
+    const data = {
+        razao_social: ($('#fiscal_razao_social').val() || '').trim(),
+        nome_fantasia: ($('#fiscal_nome_fantasia').val() || '').trim(),
+        cnpj: ($('#fiscal_cnpj').val() || '').trim(),
+        ie: ($('#fiscal_ie').val() || '').trim(),
+        crt: parseInt($('#fiscal_crt').val(), 10) || 1,
+        cnae_principal: ($('#fiscal_cnae_principal').val() || '').trim(),
+        cep: ($('#fiscal_cep').val() || '').trim(),
+        logradouro: ($('#fiscal_logradouro').val() || '').trim(),
+        numero: ($('#fiscal_numero').val() || '').trim(),
+        complemento: ($('#fiscal_complemento').val() || '').trim(),
+        bairro: ($('#fiscal_bairro').val() || '').trim(),
+        municipio: ($('#fiscal_municipio').val() || '').trim(),
+        codigo_municipio: ($('#fiscal_codigo_municipio').val() || '').trim(),
+        uf: ($('#fiscal_uf').val() || '').trim(),
+        ambiente: ($('#fiscal_ambiente').val() || 'homologacao'),
+        serie_nfce: parseInt($('#fiscal_serie_nfce').val(), 10) || 1,
+        proximo_numero_nfce: parseInt($('#fiscal_proximo_numero_nfce').val(), 10) || 1,
+        CSC: ($('#fiscal_CSC').val() || '').trim(),
+        CSC_ID: ($('#fiscal_CSC_ID').val() || '').trim(),
+        certificado_path: ($('#fiscal_certificado_path').val() || '').trim(),
+        certificado_senha: ($('#fiscal_certificado_senha').val() || '').trim()
+    };
+
+    $.ajax({
+        url: `${API_URL}/fiscal/config`,
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(data),
+        success: function() {
+            showNotification('Configuração fiscal salva com sucesso!');
+            loadFiscalConfiguracao();
+        },
+        error: function(xhr) {
+            showNotification('Erro ao salvar configuração fiscal: ' + (xhr.responseJSON?.error || 'Erro desconhecido'), 'danger');
+        }
+    });
 }
 
 function escapeHtml(s) {

@@ -66,8 +66,46 @@ router.post('/', (req, res) => {
     return;
   }
 
-  // Venda a prazo exige cliente
-  if (forma_pagamento === 'prazo') {
+  // Validar dados fiscais dos produtos vendidos
+  const produtoIds = Array.from(new Set(itens.map(item => item.produto_id).filter(id => id !== undefined && id !== null)));
+  if (itens.some(item => item.produto_id === undefined || item.produto_id === null)) {
+    res.status(400).json({ error: 'Um ou mais itens da venda não possuem produto vinculado.' });
+    return;
+  }
+
+  db.all(`SELECT id, nome, ncm, csosn FROM produtos WHERE id IN (${produtoIds.map(() => '?').join(',')})`, produtoIds, (err, produtos) => {
+    if (err) {
+      res.status(500).json({ error: err.message });
+      return;
+    }
+
+    const produtoMap = produtos.reduce((map, produto) => {
+      map[produto.id] = produto;
+      return map;
+    }, {});
+
+    const faltantes = itens.reduce((acumulador, item) => {
+      const produto = produtoMap[item.produto_id];
+      if (!produto) {
+        acumulador.push(`Produto ID ${item.produto_id} não encontrado`);
+      } else {
+        if (!produto.ncm || String(produto.ncm).trim() === '') {
+          acumulador.push(`Produto ${produto.nome || item.produto_id} sem NCM`);
+        }
+        if (!produto.csosn || String(produto.csosn).trim() === '') {
+          acumulador.push(`Produto ${produto.nome || item.produto_id} sem CSOSN`);
+        }
+      }
+      return acumulador;
+    }, []);
+
+    if (faltantes.length > 0) {
+      res.status(400).json({ error: 'Erro fiscal na venda: ' + faltantes.join('; ') });
+      return;
+    }
+
+    // Venda a prazo exige cliente
+    if (forma_pagamento === 'prazo') {
     if (!cliente_id) {
       res.status(400).json({ error: 'Cliente obrigatório para venda a prazo.' });
       return;
@@ -266,6 +304,8 @@ router.post('/', (req, res) => {
   } else {
     executarVenda();
   }
+});
+
 });
 
 // Cancelar venda

@@ -317,6 +317,57 @@ function showProdutoModal(produto = null) {
                                     ></div>
                                 </div>
                             </div>
+
+                            <div class="card mt-3">
+                                <div class="card-header p-2">
+                                    <button class="btn btn-link text-decoration-none" type="button" data-bs-toggle="collapse" data-bs-target="#dadosFiscaisSection" aria-expanded="true" aria-controls="dadosFiscaisSection">
+                                        Dados Fiscais
+                                    </button>
+                                </div>
+                                <div id="dadosFiscaisSection" class="collapse show">
+                                    <div class="card-body">
+                                        <div class="row">
+                                            <div class="col-md-3 mb-3">
+                                                <label for="ncm" class="form-label">NCM</label>
+                                                <input type="text" class="form-control" id="ncm" value="${isEdit ? escapeHtml(produto.ncm || '') : ''}">
+                                            </div>
+                                            <div class="col-md-3 mb-3">
+                                                <label for="cfop" class="form-label">CFOP</label>
+                                                <input type="text" class="form-control" id="cfop" value="${isEdit ? escapeHtml(produto.cfop || '') : ''}">
+                                            </div>
+                                            <div class="col-md-3 mb-3">
+                                                <label for="csosn" class="form-label">CSOSN</label>
+                                                <input type="text" class="form-control" id="csosn" value="${isEdit ? escapeHtml(produto.csosn || '') : ''}">
+                                            </div>
+                                            <div class="col-md-3 mb-3">
+                                                <label for="origem" class="form-label">Origem</label>
+                                                <input type="number" class="form-control" id="origem" value="${isEdit ? Number(produto.origem || 0) : 0}">
+                                            </div>
+
+                                            <div class="col-md-4 mb-3">
+                                                <label for="cest" class="form-label">CEST</label>
+                                                <input type="text" class="form-control" id="cest" value="${isEdit ? escapeHtml(produto.cest || '') : ''}">
+                                            </div>
+                                            <div class="col-md-4 mb-3">
+                                                <label for="codigo_barras" class="form-label">Código de barras</label>
+                                                <input type="text" class="form-control" id="codigo_barras" value="${isEdit ? escapeHtml(produto.codigo_barras || '') : ''}">
+                                            </div>
+                                            <div class="col-md-4 mb-3">
+                                                <label for="aliquota_icms" class="form-label">Alíquota ICMS</label>
+                                                <input type="number" step="0.01" class="form-control" id="aliquota_icms" value="${isEdit ? Number(produto.aliquota_icms || 0) : 0}">
+                                            </div>
+                                            <div class="col-md-4 mb-3">
+                                                <label for="aliquota_pis" class="form-label">Alíquota PIS</label>
+                                                <input type="number" step="0.01" class="form-control" id="aliquota_pis" value="${isEdit ? Number(produto.aliquota_pis || 0) : 0}">
+                                            </div>
+                                            <div class="col-md-4 mb-3">
+                                                <label for="aliquota_cofins" class="form-label">Alíquota COFINS</label>
+                                                <input type="number" step="0.01" class="form-control" id="aliquota_cofins" value="${isEdit ? Number(produto.aliquota_cofins || 0) : 0}">
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </form>
                     </div>
 
@@ -506,7 +557,16 @@ function saveProduto() {
         lucro_percentual: $('#lucro_percentual').val() !== '' ? parseFloat($('#lucro_percentual').val()) : null,
         estoque_atual: parseFloat($('#estoque_atual').val()) || 0,
         estoque_minimo: parseFloat($('#estoque_minimo').val()) || 0,
-        fornecedor: ($('#fornecedor').val() || '').trim()
+        fornecedor: ($('#fornecedor').val() || '').trim(),
+        ncm: ($('#ncm').val() || '').trim(),
+        cfop: ($('#cfop').val() || '').trim(),
+        csosn: ($('#csosn').val() || '').trim(),
+        origem: $('#origem').val() !== '' ? parseInt($('#origem').val(), 10) : 0,
+        cest: ($('#cest').val() || '').trim(),
+        codigo_barras: ($('#codigo_barras').val() || '').trim(),
+        aliquota_icms: parseFloat($('#aliquota_icms').val()) || 0,
+        aliquota_pis: parseFloat($('#aliquota_pis').val()) || 0,
+        aliquota_cofins: parseFloat($('#aliquota_cofins').val()) || 0
     };
 
 

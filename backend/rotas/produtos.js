@@ -91,20 +91,26 @@ router.get('/:id', (req, res) => {
 router.post('/', (req, res) => {
   const {
     codigo, nome, categoria_id, subcategoria_id, unidade, preco_compra,
-    lucro_percentual, preco_venda, estoque_atual, estoque_minimo, fornecedor
+    lucro_percentual, preco_venda, estoque_atual, estoque_minimo, fornecedor,
+    ncm, cfop, csosn, origem, cest, codigo_barras,
+    aliquota_icms, aliquota_pis, aliquota_cofins
   } = req.body;
 
   db.run(`
     INSERT INTO produtos (
       codigo, nome, categoria_id, subcategoria_id, unidade,
       preco_compra, lucro_percentual, preco_venda,
-      estoque_atual, estoque_minimo, fornecedor
+      estoque_atual, estoque_minimo, fornecedor,
+      ncm, cfop, csosn, origem, cest, codigo_barras,
+      aliquota_icms, aliquota_pis, aliquota_cofins
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `, [
     codigo, nome, categoria_id, subcategoria_id, unidade,
     preco_compra, lucro_percentual, preco_venda,
-    estoque_atual || 0, estoque_minimo || 0, fornecedor
+    estoque_atual || 0, estoque_minimo || 0, fornecedor,
+    ncm, cfop, csosn, origem, cest, codigo_barras,
+    aliquota_icms, aliquota_pis, aliquota_cofins
   ],
     function(err) {
       if (err) {

@@ -98,6 +98,14 @@ function loadPage(page) {
                 $('#page-content').html('<div class="alert alert-danger">Erro: Módulo de configurações não carregado!</div>');
             }
             break;
+        case 'fiscal':
+            if (typeof loadFiscal === 'function') {
+                loadFiscal();
+            } else {
+                console.error('loadFiscal não está definida');
+                $('#page-content').html('<div class="alert alert-danger">Erro: módulo fiscal não carregado!</div>');
+            }
+            break;
         case 'categorias':
             // Carregar página de categorias
             $.get('categorias.html', function(html) {

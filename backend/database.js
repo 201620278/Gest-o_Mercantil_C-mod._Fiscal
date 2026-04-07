@@ -48,27 +48,30 @@ function inicializarBanco() {
                   }
 
                   const colunas = rows.map(r => r.name);
+                  const alteracoes = [
+                    !colunas.includes('categoria_id') && `ALTER TABLE produtos ADD COLUMN categoria_id INTEGER`,
+                    !colunas.includes('subcategoria_id') && `ALTER TABLE produtos ADD COLUMN subcategoria_id INTEGER`,
+                    !colunas.includes('lucro_percentual') && `ALTER TABLE produtos ADD COLUMN lucro_percentual DECIMAL(10,2)`,
+                    !colunas.includes('ncm') && `ALTER TABLE produtos ADD COLUMN ncm TEXT`,
+                    !colunas.includes('cfop') && `ALTER TABLE produtos ADD COLUMN cfop TEXT`,
+                    !colunas.includes('csosn') && `ALTER TABLE produtos ADD COLUMN csosn TEXT`,
+                    !colunas.includes('origem') && `ALTER TABLE produtos ADD COLUMN origem INTEGER DEFAULT 0`,
+                    !colunas.includes('cest') && `ALTER TABLE produtos ADD COLUMN cest TEXT`,
+                    !colunas.includes('codigo_barras') && `ALTER TABLE produtos ADD COLUMN codigo_barras TEXT`,
+                    !colunas.includes('aliquota_icms') && `ALTER TABLE produtos ADD COLUMN aliquota_icms REAL DEFAULT 0`,
+                    !colunas.includes('aliquota_pis') && `ALTER TABLE produtos ADD COLUMN aliquota_pis REAL DEFAULT 0`,
+                    !colunas.includes('aliquota_cofins') && `ALTER TABLE produtos ADD COLUMN aliquota_cofins REAL DEFAULT 0`
+                  ].filter(Boolean);
 
-                  if (!colunas.includes('categoria_id')) {
-                    db.run(`ALTER TABLE produtos ADD COLUMN categoria_id INTEGER`, (err) => {
-                      if (err) console.error('Erro ao adicionar coluna categoria_id:', err);
-                      else console.log('Coluna categoria_id adicionada em produtos');
+                  alteracoes.forEach(sql => {
+                    db.run(sql, (err) => {
+                      if (err) {
+                        console.error(`Erro ao executar alteração de produto: ${sql}`, err);
+                      } else {
+                        console.log(`Alteração aplicada em produtos: ${sql}`);
+                      }
                     });
-                  }
-
-                  if (!colunas.includes('subcategoria_id')) {
-                    db.run(`ALTER TABLE produtos ADD COLUMN subcategoria_id INTEGER`, (err) => {
-                      if (err) console.error('Erro ao adicionar coluna subcategoria_id:', err);
-                      else console.log('Coluna subcategoria_id adicionada em produtos');
-                    });
-                  }
-
-                  if (!colunas.includes('lucro_percentual')) {
-                    db.run(`ALTER TABLE produtos ADD COLUMN lucro_percentual DECIMAL(10,2)`, (err) => {
-                      if (err) console.error('Erro ao adicionar coluna lucro_percentual:', err);
-                      else console.log('Coluna lucro_percentual adicionada em produtos');
-                    });
-                  }
+                  });
                 });
               // Tabela de subcategorias
               db.run(`
@@ -225,6 +228,37 @@ function inicializarBanco() {
       else console.log('Tabela vendas criada/verificada');
     });
 
+    // Garantir campos fiscais em vendas
+    db.all(`PRAGMA table_info(vendas)`, [], (err, rows) => {
+      if (err) {
+        console.error('Erro ao verificar colunas da tabela vendas:', err);
+        return;
+      }
+
+      const colunas = rows.map(r => r.name);
+
+      if (!colunas.includes('nfce_emitida')) {
+        db.run(`ALTER TABLE vendas ADD COLUMN nfce_emitida INTEGER DEFAULT 0`, (err) => {
+          if (err) console.error('Erro ao adicionar coluna nfce_emitida:', err);
+          else console.log('Coluna nfce_emitida adicionada em vendas');
+        });
+      }
+
+      if (!colunas.includes('chave_nfce')) {
+        db.run(`ALTER TABLE vendas ADD COLUMN chave_nfce TEXT`, (err) => {
+          if (err) console.error('Erro ao adicionar coluna chave_nfce:', err);
+          else console.log('Coluna chave_nfce adicionada em vendas');
+        });
+      }
+
+      if (!colunas.includes('status_fiscal')) {
+        db.run(`ALTER TABLE vendas ADD COLUMN status_fiscal TEXT DEFAULT 'nao_emitida'`, (err) => {
+          if (err) console.error('Erro ao adicionar coluna status_fiscal:', err);
+          else console.log('Coluna status_fiscal adicionada em vendas');
+        });
+      }
+    });
+
     // Tabela de itens de venda
     db.run(`
       CREATE TABLE IF NOT EXISTS vendas_itens (
@@ -240,6 +274,54 @@ function inicializarBanco() {
     `, (err) => {
       if (err) console.error('Erro ao criar tabela vendas_itens:', err);
       else console.log('Tabela vendas_itens criada/verificada');
+    });
+
+    // Tabela de notas fiscais
+    db.run(`
+      CREATE TABLE IF NOT EXISTS notas_fiscais (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        venda_id INTEGER NOT NULL,
+        tipo TEXT DEFAULT 'NFCe',
+        numero INTEGER NOT NULL,
+        serie INTEGER NOT NULL,
+        chave_acesso TEXT,
+        protocolo TEXT,
+        recibo TEXT,
+        ambiente TEXT,
+        status TEXT DEFAULT 'pendente',
+        motivo_retorno TEXT,
+        xml_path TEXT,
+        xml_assinado_path TEXT,
+        danfe_path TEXT,
+        qr_code_url TEXT,
+        data_emissao TEXT,
+        data_autorizacao TEXT,
+        data_cancelamento TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (venda_id) REFERENCES vendas(id)
+      )
+    `, (err) => {
+      if (err) console.error('Erro ao criar tabela notas_fiscais:', err);
+      else console.log('Tabela notas_fiscais criada/verificada');
+    });
+
+    // Tabela de eventos de notas fiscais
+    db.run(`
+      CREATE TABLE IF NOT EXISTS notas_fiscais_eventos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nota_fiscal_id INTEGER NOT NULL,
+        tipo_evento TEXT NOT NULL,
+        protocolo TEXT,
+        justificativa TEXT,
+        resposta TEXT,
+        xml_evento_path TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (nota_fiscal_id) REFERENCES notas_fiscais(id)
+      )
+    `, (err) => {
+      if (err) console.error('Erro ao criar tabela notas_fiscais_eventos:', err);
+      else console.log('Tabela notas_fiscais_eventos criada/verificada');
     });
 
     // Tabela de movimentações financeiras
@@ -315,6 +397,41 @@ function inicializarBanco() {
         console.log('Tabela usuarios criada/verificada');
         seedUsuarioAdmin();
       }
+    });
+
+    // Tabela fiscal da empresa
+    db.run(`
+      CREATE TABLE IF NOT EXISTS empresa_fiscal (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        razao_social TEXT NOT NULL,
+        nome_fantasia TEXT,
+        cnpj TEXT NOT NULL,
+        ie TEXT NOT NULL,
+        crt INTEGER NOT NULL DEFAULT 1,
+        cnae_principal TEXT,
+        cep TEXT,
+        logradouro TEXT,
+        numero TEXT,
+        complemento TEXT,
+        bairro TEXT,
+        municipio TEXT,
+        codigo_municipio TEXT,
+        uf TEXT,
+        ambiente TEXT DEFAULT 'homologacao',
+        serie_nfce INTEGER DEFAULT 1,
+        proximo_numero_nfce INTEGER DEFAULT 1,
+        CSC TEXT,
+        CSC_ID TEXT,
+        certificado_path TEXT,
+        certificado_senha TEXT,
+        token_producao TEXT,
+        token_homologacao TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )
+    `, (err) => {
+      if (err) console.error('Erro ao criar tabela empresa_fiscal:', err);
+      else console.log('Tabela empresa_fiscal criada/verificada');
     });
 
     // Tabela de configurações (criar por último)

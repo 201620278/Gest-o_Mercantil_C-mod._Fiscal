@@ -62,6 +62,7 @@ const financeiroRoutes = require('./rotas/financeiro');
 const configuracoesRoutes = require('./rotas/configuracoes');
 const fornecedoresRoutes = require('./rotas/fornecedores');
 const contasReceberRoutes = require('./rotas/contas_receber');
+const fiscalRoutes = require('./rotas/fiscal');
 
 app.use('/api/produtos', verificarToken, produtosRoutes);
 app.use('/api/clientes', verificarToken, clientesRoutes);
@@ -69,6 +70,7 @@ app.use('/api/compras', verificarToken, comprasRoutes);
 app.use('/api/categorias', verificarToken, categoriasRoutes);
 app.use('/api/subcategorias', verificarToken, subcategoriasRoutes);
 app.use('/api/vendas', verificarToken, vendasRoutes);
+app.use('/api/fiscal', verificarToken, fiscalRoutes);
 app.use('/api/contas-receber', verificarToken, contasReceberRoutes);
 app.use('/api/financeiro', verificarToken, financeiroRoutes);
 app.use('/api/configuracoes', verificarToken, configuracoesRoutes);
