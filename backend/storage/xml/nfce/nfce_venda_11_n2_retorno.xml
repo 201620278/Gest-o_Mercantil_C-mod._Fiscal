@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<retEnviNFe>
+  <infRec>
+    <nRec>1675232557</nRec>
+    <dhRecbto>2026-04-08T03:29:50.148Z</dhRecbto>
+    <tMed>1</tMed>
+  </infRec>
+  <protNFe>
+    <infProt>
+      <tpAmb>2</tpAmb>
+      <verAplic>1.0</verAplic>
+      <chNFe></chNFe>
+      <dhRecbto>2026-04-08T03:29:50.148Z</dhRecbto>
+      <nProt>1675232557</nProt>
+      <digVal>ASSINATURA_PLACEHOLDER</digVal>
+      <cStat>100</cStat>
+      <xMotivo>Autorizado o uso da NFC-e em ambiente de homologação</xMotivo>
+    </infProt>
+  </protNFe>
+</retEnviNFe>

@@ -42,7 +42,7 @@ function listarNotasFiscais() {
     $('#fiscal-content').html('<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div><div class="mt-2">Carregando notas fiscais...</div></div>');
 
     $.ajax({
-        url: `${API_URL}/fiscal/nfce`,
+        url: `${API_URL}/fiscal/notas`,
         method: 'GET',
         success: function(notas) {
             if (!notas || notas.length === 0) {

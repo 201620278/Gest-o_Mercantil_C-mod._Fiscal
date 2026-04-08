@@ -582,7 +582,10 @@ async function emitirNfce(vendaId) {
                   retorno_xml_path: retornoXmlPath,
                   status: statusFinal,
                   protocolo: retorno.protocolo || null,
+                  data_autorizacao: dataAutorizacao,
                   motivo_retorno: retorno.mensagem || null,
+                  qr_code_url: retorno.qrCodeUrl || null,
+                  qr_code_base64: retorno.qrCodeBase64 || null,
                   message: statusFinal === 'autorizado'
                     ? 'NFC-e autorizada pela SEFAZ.'
                     : 'NFC-e rejeitada pela SEFAZ.'

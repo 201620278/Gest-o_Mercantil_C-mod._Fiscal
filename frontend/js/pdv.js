@@ -42,7 +42,7 @@ function renderPDV() {
             <div class="row g-3 align-items-start">
                 <div class="col-lg-3 col-md-4 col-12">
                     <div class="pdv-header text-center mb-3" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: #fff; border-radius: 10px; padding: 15px;">
-                        <h2 style="font-size: 1.6rem; margin-bottom: 0;">Esquinão da economia</h2>
+                        <h2 style="font-size: 1.6rem; margin-bottom: 0;">ESQUINAO DA ECONOMIA</h2>
                         <div style="font-size: 1rem;">Operador: <span id="operador-nome">Usuário</span> <span id="data-hora"></span></div>
                     </div>
                     <div class="card p-3 mb-3">
@@ -626,7 +626,7 @@ function finalizarVenda() {
 
             mostrarConfirmacaoFiscal(vendaId, function(emitirFiscal) {
                 if (!emitirFiscal) {
-                    imprimirCupomPDV(vendaId, dados, total, desconto);
+                    imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
                     showNotification('Venda salva como não fiscal. Cupom não fiscal impresso.', 'info');
                     finalizarPosVenda();
                     return;
@@ -646,7 +646,7 @@ function finalizarVenda() {
                                 'warning'
                             );
 
-                            imprimirCupomPDV(vendaId, dados, total, desconto);
+                            imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
                             finalizarPosVenda();
                             return;
                         }
@@ -658,8 +658,10 @@ function finalizarVenda() {
                                 showNotification('NFC-e emitida com sucesso!', 'success');
                                 console.log('NFC-e emitida:', nota);
 
-                                if (nota && nota.danfe_url) {
-                                    window.open(nota.danfe_url, '_blank');
+                                if (nota && nota.status === 'autorizado') {
+                                    imprimirDanfeNfce(vendaId, dados, total, desconto, nota);
+                                } else {
+                                    imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
                                 }
 
                                 finalizarPosVenda();
@@ -673,7 +675,7 @@ function finalizarVenda() {
                                 }
 
                                 showNotification(mensagem, 'warning');
-                                imprimirCupomPDV(vendaId, dados, total, desconto);
+                                imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
                                 finalizarPosVenda();
                             }
                         });
@@ -687,7 +689,7 @@ function finalizarVenda() {
                         }
 
                         showNotification(mensagem, 'warning');
-                        imprimirCupomPDV(vendaId, dados, total, desconto);
+                        imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
                         finalizarPosVenda();
                     }
                 });
@@ -746,8 +748,8 @@ function cancelarVendaAtual() {
     }
 }
 
-// Imprimir cupom
-function imprimirCupomPDV(vendaId, venda, total, desconto) {
+// Imprimir DANFE NFC-e (cupom fiscal autorizado)
+function imprimirDanfeNfce(vendaId, venda, total, desconto, nota) {
     const dataHora = new Date().toLocaleString('pt-BR');
     const formaPagamentoTexto = {
         'dinheiro': 'Dinheiro',
@@ -756,13 +758,165 @@ function imprimirCupomPDV(vendaId, venda, total, desconto) {
         'pix': 'PIX',
         'prazo': 'A Prazo'
     }[venda.forma_pagamento] || venda.forma_pagamento;
-    
+
+    const chaveFormatada = nota.chave_acesso ? nota.chave_acesso.match(/.{1,4}/g).join(' ') : 'N/A';
+    const qrCodeImg = nota.qr_code_base64 || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
     const cupomHtml = `
         <!DOCTYPE html>
         <html>
         <head>
             <meta charset="UTF-8">
-            <title>Cupom Fiscal</title>
+            <title>DANFE NFC-e</title>
+            <style>
+                body {
+                    font-family: monospace;
+                    width: 80mm;
+                    margin: 0 auto;
+                    padding: 10px;
+                    font-size: 12px;
+                }
+                .header {
+                    text-align: center;
+                    margin-bottom: 10px;
+                    padding-bottom: 8px;
+                    border-bottom: 1px dashed #000;
+                }
+                .empresa {
+                    font-size: 14px;
+                    font-weight: bold;
+                    margin-bottom: 3px;
+                }
+                .fiscal-info {
+                    font-size: 10px;
+                    margin-bottom: 5px;
+                }
+                .itens {
+                    margin: 10px 0;
+                }
+                .cupom-item {
+                    margin-bottom: 6px;
+                    padding-bottom: 3px;
+                    border-bottom: 1px dotted #ccc;
+                }
+                .total {
+                    text-align: right;
+                    margin-top: 10px;
+                    padding-top: 8px;
+                    border-top: 1px dashed #000;
+                }
+                .fiscal-data {
+                    margin-top: 10px;
+                    border-top: 1px dashed #000;
+                    padding-top: 8px;
+                    font-size: 9px;
+                }
+                .qr-code {
+                    text-align: center;
+                    margin: 8px 0;
+                }
+                .footer {
+                    text-align: center;
+                    margin-top: 15px;
+                    padding-top: 8px;
+                    border-top: 1px dashed #000;
+                    font-size: 9px;
+                }
+                @media print {
+                    body {
+                        margin: 0;
+                        padding: 5px;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <div class="empresa">ESQUINAO DA ECONOMIA</div>
+                <div>CNPJ: 65.957.340/0001-50</div>
+                <div>IE: 073252638</div>
+                <div>R. Vereador José Rodrigues Soares, 268</div>
+                <div>Piraijá - Juazeiro do Norte - CE</div>
+                <div class="fiscal-info">
+                    NFC-e ${nota.numero}/${nota.serie}<br>
+                    ${dataHora}
+                </div>
+            </div>
+
+            <div class="itens">
+                ${venda.itens.map(item => {
+                    let nome = item.produto_nome;
+                    if (!nome && produtosDisponiveis) {
+                        const prod = produtosDisponiveis.find(p => p.id === (item.produto_id || item.id));
+                        nome = prod ? prod.nome : 'Produto';
+                    }
+                    return `
+                        <div class="cupom-item">
+                            ${escapeHtml(nome || 'Produto')}<br>
+                            ${item.quantidade} x ${formatCurrency(item.preco_unitario)} = ${formatCurrency(item.subtotal)}
+                        </div>
+                    `;
+                }).join('')}
+            </div>
+
+            <div class="total">
+                Subtotal: ${formatCurrency(total + desconto)}<br>
+                Desconto: ${formatCurrency(desconto)}<br>
+                <strong>TOTAL: ${formatCurrency(total)}</strong><br>
+                Forma Pagamento: ${formaPagamentoTexto}
+            </div>
+
+            ${vendaPrazoInfo && formaPagamentoSelecionada === 'prazo' ? `
+                <div style="margin-top: 8px; border-top: 1px dashed #000; padding-top: 5px;">
+                    <strong>Venda a Prazo</strong><br>
+                    Parcelas: ${vendaPrazoInfo.parcelas}<br>
+                    1º Vencimento: ${vendaPrazoInfo.primeiro_vencimento}
+                </div>
+            ` : ''}
+
+            <div class="fiscal-data">
+                <strong>DADOS FISCAIS</strong><br>
+                Chave: ${chaveFormatada}<br>
+                Protocolo: ${nota.protocolo || 'N/A'}<br>
+                Autorização: ${nota.data_autorizacao ? new Date(nota.data_autorizacao).toLocaleString('pt-BR') : 'N/A'}<br>
+                <div class="qr-code">
+                    <img src="${qrCodeImg}" alt="QR Code NFC-e" style="width: 80px; height: 80px; border: 1px solid #000;">
+                    <br><small>Consulta via QR Code</small>
+                </div>
+            </div>
+
+            <div class="footer">
+                <strong>DOCUMENTO FISCAL ELETRÔNICO</strong><br>
+                NFC-e autorizada pela SEFAZ<br>
+                Consulte em: ${nota.qr_code_url || 'www.sefaz.ce.gov.br'}
+            </div>
+        </body>
+        </html>
+    `;
+
+    const printWindow = window.open('', '_blank', 'width=400,height=700');
+    printWindow.document.write(cupomHtml);
+    printWindow.document.close();
+    printWindow.print();
+}
+
+// Imprimir cupom não fiscal
+function imprimirCupomNaoFiscal(vendaId, venda, total, desconto) {
+    const dataHora = new Date().toLocaleString('pt-BR');
+    const formaPagamentoTexto = {
+        'dinheiro': 'Dinheiro',
+        'cartao_credito': 'Cartão de Crédito',
+        'cartao_debito': 'Cartão de Débito',
+        'pix': 'PIX',
+        'prazo': 'A Prazo'
+    }[venda.forma_pagamento] || venda.forma_pagamento;
+
+    const cupomHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Cupom Não Fiscal</title>
             <style>
                 body {
                     font-family: monospace;
@@ -813,13 +967,13 @@ function imprimirCupomPDV(vendaId, venda, total, desconto) {
         </head>
         <body>
             <div class="header">
-                <div class="empresa">Esquinão da economia</div>
-                <div>CNPJ: 00.000.000/0001-00</div>
+                <div class="empresa">ESQUINAO DA ECONOMIA</div>
+                <div>CNPJ: 65.957.340/0001-50</div>
                 <div>${dataHora}</div>
-                <div>CUPOM FISCAL</div>
+                <div>CUPOM NÃO FISCAL</div>
                 <div>Venda #${vendaId}</div>
             </div>
-            
+
             <div class="itens">
                 ${venda.itens.map(item => {
                     let nome = item.produto_nome;
@@ -835,14 +989,14 @@ function imprimirCupomPDV(vendaId, venda, total, desconto) {
                     `;
                 }).join('')}
             </div>
-            
+
             <div class="total">
                 Subtotal: ${formatCurrency(total + desconto)}<br>
                 Desconto: ${formatCurrency(desconto)}<br>
                 <strong>TOTAL: ${formatCurrency(total)}</strong><br>
                 Forma Pagamento: ${formaPagamentoTexto}
             </div>
-            
+
             ${vendaPrazoInfo && formaPagamentoSelecionada === 'prazo' ? `
                 <div style="margin-top: 10px; border-top: 1px dashed #000; padding-top: 8px;">
                     <strong>Venda a Prazo</strong><br>
@@ -850,7 +1004,7 @@ function imprimirCupomPDV(vendaId, venda, total, desconto) {
                     1º Vencimento: ${vendaPrazoInfo.primeiro_vencimento}
                 </div>
             ` : ''}
-            
+
             <div class="footer">
                 Obrigado pela preferência!<br>
                 Volte sempre!<br>
@@ -859,7 +1013,7 @@ function imprimirCupomPDV(vendaId, venda, total, desconto) {
         </body>
         </html>
     `;
-    
+
     const printWindow = window.open('', '_blank', 'width=400,height=600');
     printWindow.document.write(cupomHtml);
     printWindow.document.close();

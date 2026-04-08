@@ -1,13 +1,37 @@
 const https = require('https');
+const QRCode = require('qrcode');
 
 function transmitirNfce(xmlAssinado, ambiente) {
-  return new Promise((resolve) => {
+  return new Promise(async (resolve) => {
     const dataAutorizacao = new Date().toISOString();
     const protocolo = `1${Math.floor(Math.random() * 900000000) + 100000000}`;
     const codigo = '100';
     const mensagem = ambiente === 'producao'
       ? 'Autorizado o uso da NFC-e em ambiente de produção'
       : 'Autorizado o uso da NFC-e em ambiente de homologação';
+
+    // Extrair chave de acesso do XML assinado (simulação)
+    const chaveMatch = xmlAssinado.match(/<infNFe[^>]*Id="NFe([^"]+)"/);
+    const chaveAcesso = chaveMatch ? chaveMatch[1] : 'CHAVE_SIMULADA';
+
+    // Gerar QR Code URL (simulação baseada na chave)
+    const urlConsulta = `https://www.sefaz.ce.gov.br/nfce/consulta?qrcode=${chaveAcesso}`;
+
+    // Gerar QR Code em base64
+    let qrCodeBase64 = null;
+    try {
+      qrCodeBase64 = await QRCode.toDataURL(urlConsulta, {
+        width: 200,
+        margin: 1,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+    } catch (error) {
+      console.error('Erro ao gerar QR Code:', error);
+      qrCodeBase64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+    }
 
     const xmlRetorno = `<?xml version="1.0" encoding="UTF-8"?>\n` +
       `<retEnviNFe>\n` +
@@ -36,7 +60,9 @@ function transmitirNfce(xmlAssinado, ambiente) {
       mensagem,
       protocolo,
       dataAutorizacao,
-      xmlRetorno
+      xmlRetorno,
+      qrCodeUrl: urlConsulta,
+      qrCodeBase64
     });
   });
 }
