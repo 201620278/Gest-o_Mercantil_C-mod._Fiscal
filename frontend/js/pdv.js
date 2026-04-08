@@ -565,210 +565,173 @@ function confirmarPagamento() {
 
 // Finalizar venda
 function finalizarVenda() {
-    if (carrinho.length === 0) {
-        showNotification('Adicione itens ao carrinho!', 'warning');
+    if (!carrinho || carrinho.length === 0) {
+        showNotification('Adicione produtos ao carrinho antes de finalizar a venda.', 'warning');
         return;
     }
-    
+
     if (!formaPagamentoSelecionada) {
-        showNotification('Selecione a forma de pagamento!', 'warning');
-        abrirModalPagamento();
+        showNotification('Selecione uma forma de pagamento.', 'warning');
         return;
     }
-    
-    const total = calcularTotalValor();
+
     const desconto = parseFloat($('#desconto').val()) || 0;
-    
-    const venda = {
+
+    const subtotal = carrinho.reduce((total, item) => {
+        return total + (parseFloat(item.preco_unitario) * parseFloat(item.quantidade));
+    }, 0);
+
+    const total = subtotal - desconto;
+
+    if (total < 0) {
+        showNotification('O desconto não pode ser maior que o valor total da venda.', 'warning');
+        return;
+    }
+
+    const clienteId = $('#cliente').val() || null;
+    const observacoes = $('#observacoes').val() || '';
+
+    const dados = {
+        cliente_id: clienteId,
+        forma_pagamento: formaPagamentoSelecionada,
+        desconto: desconto,
+        total: total,
+        observacoes: observacoes,
         itens: carrinho.map(item => ({
             produto_id: item.id,
-            quantidade: item.quantidade,
-            preco_unitario: item.preco_unitario,
-            subtotal: item.subtotal
-        })),
-        total: total,
-        desconto: desconto,
-        forma_pagamento: formaPagamentoSelecionada
+            quantidade: parseFloat(item.quantidade),
+            preco_unitario: parseFloat(item.preco_unitario),
+            subtotal: parseFloat(item.preco_unitario) * parseFloat(item.quantidade)
+        }))
     };
 
-    const produtosSemFiscal = carrinho.filter(item => {
-        const produto = produtosDisponiveis.find(p => p.id === item.id);
-        return produto && (!produto.ncm || String(produto.ncm).trim() === '' || !produto.csosn || String(produto.csosn).trim() === '');
-    });
-
-    if (produtosSemFiscal.length > 0) {
-        const nomes = produtosSemFiscal.map(item => item.nome || item.id).join(', ');
-        showNotification(`Produtos sem NCM/CSOSN: ${nomes}. Atualize o cadastro antes de vender.`, 'danger');
-        return;
-    }
-    
     if (formaPagamentoSelecionada === 'prazo' && vendaPrazoInfo) {
-        venda.cliente_id = vendaPrazoInfo.cliente_id;
-        venda.parcelas = vendaPrazoInfo.parcelas;
-        venda.primeiro_vencimento = vendaPrazoInfo.primeiro_vencimento;
+        dados.parcelas = vendaPrazoInfo.parcelas;
+        dados.primeiro_vencimento = vendaPrazoInfo.primeiro_vencimento;
     }
-    
-    showNotification('Processando venda...', 'info');
-    
-    function enviarVenda(dados, forcar = false) {
-        if (forcar) dados.forcar = true;
-        
-        $.ajax({
-            url: `${API_URL}/vendas`,
-            method: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify(dados),
-            success: function(response) {
-                showNotification(`Venda finalizada! Código: ${response.codigo}`, 'success');
-                const vendaId = response.id;
 
-                mostrarConfirmacaoFiscal(vendaId, function(emissaoFiscal) {
-                    if (emissaoFiscal) {
+    $.ajax({
+        url: `${API_URL}/vendas`,
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify(dados),
+        success: function(response) {
+            const vendaId = response.id || response.venda_id;
+
+            if (!vendaId) {
+                showNotification('Venda salva, mas o ID da venda não foi retornado pelo servidor.', 'warning');
+                finalizarPosVenda();
+                return;
+            }
+
+            mostrarConfirmacaoFiscal(vendaId, function(emitirFiscal) {
+                if (!emitirFiscal) {
+                    imprimirCupomPDV(vendaId, dados, total, desconto);
+                    showNotification('Venda salva como não fiscal. Cupom não fiscal impresso.', 'info');
+                    finalizarPosVenda();
+                    return;
+                }
+
+                $.ajax({
+                    url: `${API_URL}/fiscal/nfce/validar/${vendaId}`,
+                    method: 'GET',
+                    success: function(validacao) {
+                        if (!validacao.ok) {
+                            const mensagemErros = Array.isArray(validacao.erros)
+                                ? validacao.erros.join(' | ')
+                                : 'Dados fiscais incompletos';
+
+                            showNotification(
+                                `Venda salva, mas não foi possível emitir NFC-e: ${mensagemErros}`,
+                                'warning'
+                            );
+
+                            imprimirCupomPDV(vendaId, dados, total, desconto);
+                            finalizarPosVenda();
+                            return;
+                        }
+
                         $.ajax({
                             url: `${API_URL}/fiscal/nfce/emitir/${vendaId}`,
                             method: 'POST',
                             success: function(nota) {
-                                showNotification('NFC-e emitida com sucesso!');
-                                console.log('Nota emitida:', nota);
-                                if (nota.danfe_url) {
+                                showNotification('NFC-e emitida com sucesso!', 'success');
+                                console.log('NFC-e emitida:', nota);
+
+                                if (nota && nota.danfe_url) {
                                     window.open(nota.danfe_url, '_blank');
                                 }
+
+                                finalizarPosVenda();
                             },
                             error: function(xhr) {
-                                console.error(xhr);
-                                showNotification('Venda salva, mas houve erro na emissão fiscal.', 'warning');
+                                console.error('Erro ao emitir NFC-e:', xhr);
+
+                                let mensagem = 'Venda salva, mas houve erro na emissão fiscal.';
+                                if (xhr.responseJSON && xhr.responseJSON.error) {
+                                    mensagem = `Venda salva, mas houve erro na emissão fiscal: ${xhr.responseJSON.error}`;
+                                }
+
+                                showNotification(mensagem, 'warning');
+                                imprimirCupomPDV(vendaId, dados, total, desconto);
+                                finalizarPosVenda();
                             }
                         });
-                    } else {
-                        imprimirCupomPDV(response.id, dados, total, desconto);
-                        showNotification('Venda salva como não fiscal. Cupom não fiscal impresso.', 'info');
-                    }
+                    },
+                    error: function(xhr) {
+                        console.error('Erro ao validar NFC-e:', xhr);
 
-                    // Resetar estado
-                    carrinho = [];
-                    formaPagamentoSelecionada = null;
-                    vendaPrazoInfo = null;
-                    $('#desconto').val(0);
-                    atualizarCarrinho();
-                    
-                    // Recarregar produtos para atualizar estoque
-                    $.ajax({
-                        url: `${API_URL}/produtos`,
-                        method: 'GET',
-                        success: function(produtos) {
-                            produtosDisponiveis = produtos;
+                        let mensagem = 'Venda salva, mas houve erro ao validar os dados fiscais.';
+                        if (xhr.responseJSON && xhr.responseJSON.error) {
+                            mensagem = `Venda salva, mas houve erro na validação fiscal: ${xhr.responseJSON.error}`;
                         }
-                    });
+
+                        showNotification(mensagem, 'warning');
+                        imprimirCupomPDV(vendaId, dados, total, desconto);
+                        finalizarPosVenda();
+                    }
                 });
+            });
+        },
+        error: function(xhr) {
+            console.error('Erro ao salvar venda:', xhr);
+
+            let mensagem = 'Erro ao finalizar venda.';
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+                mensagem = xhr.responseJSON.error;
+            }
+
+            showNotification(mensagem, 'danger');
+        }
+    });
+
+    function finalizarPosVenda() {
+        carrinho = [];
+        formaPagamentoSelecionada = null;
+        vendaPrazoInfo = null;
+
+        $('#desconto').val(0);
+        $('#cliente').val('');
+        $('#observacoes').val('');
+
+        atualizarCarrinho();
+
+        $.ajax({
+            url: `${API_URL}/produtos`,
+            method: 'GET',
+            success: function(produtos) {
+                produtosDisponiveis = produtos || [];
             },
             error: function(xhr) {
-                if (xhr.status === 409 && xhr.responseJSON && xhr.responseJSON.pode_continuar) {
-                    if ($('#modalDebitoAviso').length) return;
-                    
-                    const totalAberto = parseFloat(xhr.responseJSON.total_em_aberto).toFixed(2);
-                    const parcelasVencidas = xhr.responseJSON.parcelas_vencidas;
-                    
-                    const avisoHtml = `
-                        <div class="modal fade" id="modalDebitoAviso" tabindex="-1">
-                            <div class="modal-dialog modal-dialog-centered">
-                                <div class="modal-content">
-                                    <div class="modal-header bg-warning">
-                                        <h5 class="modal-title text-dark">Atenção</h5>
-                                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                                    </div>
-                                    <div class="modal-body text-center">
-                                        <div class="mb-2 text-danger" style="font-size: 1.2rem;">
-                                            <i class="fas fa-exclamation-triangle"></i>
-                                        </div>
-                                        <p class="mb-2">Cliente possui <b>débito em aberto</b>!</p>
-                                        <p>Total em aberto: <b>R$ ${totalAberto}</b><br>Parcelas vencidas: <b>${parcelasVencidas}</b></p>
-                                        <p class="mb-0">Deseja continuar mesmo assim?</p>
-                                    </div>
-                                    <div class="modal-footer justify-content-center">
-                                        <button type="button" class="btn btn-success" id="btnDebitoSim">SIM</button>
-                                        <button type="button" class="btn btn-danger" data-bs-dismiss="modal">NÃO</button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    
-                    $('#modal-container').html(avisoHtml);
-                    const modal = new bootstrap.Modal(document.getElementById('modalDebitoAviso'));
-                    modal.show();
-                    
-                    $('#btnDebitoSim').off('click').on('click', function() {
-                        modal.hide();
-                        setTimeout(() => {
-                            $('#modalDebitoAviso').remove();
-                            enviarVenda(dados, true);
-                        }, 300);
-                    });
-                    
-                    $('#modalDebitoAviso').on('hidden.bs.modal', function() {
-                        $('#modalDebitoAviso').remove();
-                    });
-                    
-                    return;
-                }
-                
-                console.error('Erro ao finalizar venda:', xhr);
-                showNotification('Erro ao finalizar venda: ' + (xhr.responseJSON?.error || 'Erro desconhecido'), 'danger');
+                console.error('Erro ao recarregar produtos:', xhr);
             }
         });
     }
-    
-    enviarVenda(venda);
 }
 
 function mostrarConfirmacaoFiscal(vendaId, callback) {
-    const modalId = 'modalConfirmacaoFiscal';
-    if ($(`#${modalId}`).length) return;
-
-    const modalHtml = `
-        <div class="modal fade" id="${modalId}" tabindex="-1" aria-labelledby="${modalId}Label" aria-hidden="true">
-            <div class="modal-dialog modal-dialog-centered">
-                <div class="modal-content">
-                    <div class="modal-header">
-                        <h5 class="modal-title" id="${modalId}Label">Confirmação Fiscal</h5>
-                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
-                    </div>
-                    <div class="modal-body text-center">
-                        <p>Deseja emitir cupom fiscal (NFC-e) agora?</p>
-                    </div>
-                    <div class="modal-footer justify-content-center">
-                        <button type="button" class="btn btn-success" id="btnConfirmarFiscalSim">SIM</button>
-                        <button type="button" class="btn btn-danger" id="btnConfirmarFiscalNao">NÃO</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-    `;
-
-    $('#modal-container').html(modalHtml);
-    const modalElement = document.getElementById(modalId);
-    const modal = new bootstrap.Modal(modalElement, { backdrop: 'static', keyboard: false });
-    modal.show();
-
-    $('#btnConfirmarFiscalSim').off('click').on('click', function() {
-        modal.hide();
-        setTimeout(() => {
-            $(`#${modalId}`).remove();
-            callback(true);
-        }, 200);
-    });
-
-    $('#btnConfirmarFiscalNao').off('click').on('click', function() {
-        modal.hide();
-        setTimeout(() => {
-            $(`#${modalId}`).remove();
-            callback(false);
-        }, 200);
-    });
-
-    $(`#${modalId}`).on('hidden.bs.modal', function() {
-        $(`#${modalId}`).remove();
-    });
+    const emitir = confirm('Deseja emitir cupom fiscal (NFC-e) para esta venda?');
+    callback(emitir);
 }
 
 // Cancelar venda atual
