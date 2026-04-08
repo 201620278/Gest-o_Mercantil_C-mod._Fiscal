@@ -1,8 +1,25 @@
 const express = require('express');
 const router = express.Router();
 
+const path = require('path');
+const multer = require('multer');
+const fs = require('fs');
 const db = require('../database');
 const fiscalService = require('../services/fiscalService');
+const certificadoService = require('../services/certificadoService');
+
+const uploadTempDir = path.join(__dirname, '..', 'storage', 'temp-certificados');
+
+if (!fs.existsSync(uploadTempDir)) {
+  fs.mkdirSync(uploadTempDir, { recursive: true });
+}
+
+const uploadCertificado = multer({
+  dest: uploadTempDir,
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5 MB
+  }
+});
 
 function tratarErro(res, error) {
   console.error('[FISCAL]', error);
@@ -19,7 +36,7 @@ function tratarErro(res, error) {
 router.get('/config', (req, res) => {
   db.get(`
     SELECT *
-    FROM configuracao_fiscal
+    FROM empresa_fiscal
     ORDER BY id DESC
     LIMIT 1
   `, [], (err, row) => {
@@ -58,23 +75,66 @@ router.post('/config', (req, res) => {
     csc_id
   } = req.body || {};
 
+  const erros = [];
+
+  const somenteNumeros = (v) => String(v || '').replace(/\D/g, '');
+
+  const cnpjLimpo = somenteNumeros(cnpj);
+
+  if (!cnpjLimpo || cnpjLimpo.length !== 14) {
+    erros.push('CNPJ inválido');
+  }
+
+  if (!razao_social) {
+    erros.push('Razão social obrigatória');
+  }
+
+  if (!nome_fantasia) {
+    erros.push('Nome fantasia obrigatório');
+  }
+
+  if (!ie) {
+    erros.push('Inscrição Estadual obrigatória');
+  }
+
+  if (!uf) {
+    erros.push('UF obrigatória');
+  }
+
+  if (!municipio) {
+    erros.push('Município obrigatório');
+  }
+
   const cscFinal = CSC || csc || '';
   const cscIdFinal = CSC_ID || csc_id || '';
 
-  // Verificar se já existe configuração
-  db.get(`SELECT id FROM configuracao_fiscal ORDER BY id DESC LIMIT 1`, [], (err, row) => {
+  if (!cscFinal) {
+    erros.push('CSC obrigatório');
+  }
+
+  if (!cscIdFinal) {
+    erros.push('CSC ID obrigatório');
+  }
+
+  if (erros.length > 0) {
+    res.status(400).json({
+      error: 'Erro na configuração fiscal',
+      detalhes: erros
+    });
+    return;
+  }
+
+  // verificar se já existe configuração
+  db.get(`SELECT id FROM empresa_fiscal LIMIT 1`, [], (err, existente) => {
     if (err) {
       tratarErro(res, err);
       return;
     }
 
-    const existe = !!row;
-
-    if (existe) {
+    if (existente) {
       // UPDATE
       db.run(`
-        UPDATE configuracao_fiscal
-        SET
+        UPDATE empresa_fiscal SET
           cnpj = ?,
           razao_social = ?,
           nome_fantasia = ?,
@@ -97,18 +157,18 @@ router.post('/config', (req, res) => {
           updated_at = datetime('now')
         WHERE id = ?
       `, [
-        cnpj || '',
-        razao_social || '',
-        nome_fantasia || '',
-        ie || '',
+        cnpjLimpo,
+        razao_social,
+        nome_fantasia,
+        ie,
         crt || 1,
         logradouro || '',
         numero || '',
         complemento || '',
         bairro || '',
         codigo_municipio || '',
-        municipio || '',
-        uf || '',
+        municipio,
+        uf,
         cep || '',
         cnae_principal || '',
         ambiente || 'homologacao',
@@ -116,22 +176,23 @@ router.post('/config', (req, res) => {
         Number(proximo_numero_nfce || 1),
         cscFinal,
         cscIdFinal,
-        row.id
+        existente.id
       ], function(errUpdate) {
         if (errUpdate) {
           tratarErro(res, errUpdate);
           return;
         }
+
         res.json({
           success: true,
-          id: row.id,
-          message: 'Configuração fiscal atualizada com sucesso.'
+          message: 'Configuração fiscal atualizada com sucesso'
         });
       });
+
     } else {
       // INSERT
       db.run(`
-        INSERT INTO configuracao_fiscal (
+        INSERT INTO empresa_fiscal (
           cnpj,
           razao_social,
           nome_fantasia,
@@ -155,18 +216,18 @@ router.post('/config', (req, res) => {
           updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       `, [
-        cnpj || '',
-        razao_social || '',
-        nome_fantasia || '',
-        ie || '',
+        cnpjLimpo,
+        razao_social,
+        nome_fantasia,
+        ie,
         crt || 1,
         logradouro || '',
         numero || '',
         complemento || '',
         bairro || '',
         codigo_municipio || '',
-        municipio || '',
-        uf || '',
+        municipio,
+        uf,
         cep || '',
         cnae_principal || '',
         ambiente || 'homologacao',
@@ -179,13 +240,139 @@ router.post('/config', (req, res) => {
           tratarErro(res, errInsert);
           return;
         }
+
         res.json({
           success: true,
           id: this.lastID,
-          message: 'Configuração fiscal criada com sucesso.'
+          message: 'Configuração fiscal salva com sucesso'
         });
       });
     }
+  });
+});
+
+// Upload do certificado digital
+router.post('/config/certificado', uploadCertificado.single('certificado'), (req, res) => {
+  try {
+    if (!req.file) {
+      res.status(400).json({ error: 'Arquivo do certificado não enviado.' });
+      return;
+    }
+
+    const senha = req.body?.senha;
+
+    const salvo = certificadoService.salvarArquivoCertificado(req.file);
+    const validacao = certificadoService.validarCertificadoPfx(salvo.filePath, senha);
+
+    if (!validacao.ok) {
+      try {
+        fs.unlinkSync(salvo.filePath);
+      } catch (_) {}
+
+      res.status(400).json(validacao);
+      return;
+    }
+
+    db.get(`SELECT id FROM empresa_fiscal LIMIT 1`, [], (err, existente) => {
+      if (err) {
+        tratarErro(res, err);
+        return;
+      }
+
+      if (!existente) {
+        res.status(400).json({
+          error: 'Cadastre primeiro a configuração fiscal da empresa antes de enviar o certificado.'
+        });
+        return;
+      }
+
+      db.run(`
+        UPDATE empresa_fiscal
+        SET
+          certificado_path = ?,
+          certificado_senha = ?,
+          certificado_validade_inicio = ?,
+          certificado_validade_fim = ?,
+          certificado_serial = ?,
+          updated_at = datetime('now')
+        WHERE id = ?
+      `, [
+        salvo.filePath,
+        senha,
+        validacao.info.validFrom,
+        validacao.info.validTo,
+        validacao.info.serialNumber,
+        existente.id
+      ], function(errUpdate) {
+        if (errUpdate) {
+          tratarErro(res, errUpdate);
+          return;
+        }
+
+        res.json({
+          success: true,
+          message: 'Certificado validado e salvo com sucesso.',
+          certificado: {
+            fileName: salvo.fileName,
+            filePath: salvo.filePath,
+            serialNumber: validacao.info.serialNumber,
+            validFrom: validacao.info.validFrom,
+            validTo: validacao.info.validTo,
+            subject: validacao.info.subject,
+            issuer: validacao.info.issuer
+          }
+        });
+      });
+    });
+  } catch (error) {
+    tratarErro(res, error);
+  }
+});
+
+// Testar certificado salvo
+router.get('/config/certificado/testar', (req, res) => {
+  db.get(`
+    SELECT
+      certificado_path,
+      certificado_senha,
+      certificado_validade_inicio,
+      certificado_validade_fim,
+      certificado_serial
+    FROM empresa_fiscal
+    ORDER BY id DESC
+    LIMIT 1
+  `, [], (err, row) => {
+    if (err) {
+      tratarErro(res, err);
+      return;
+    }
+
+    if (!row || !row.certificado_path) {
+      res.status(404).json({ error: 'Nenhum certificado configurado.' });
+      return;
+    }
+
+    const resultado = certificadoService.validarCertificadoPfx(
+      row.certificado_path,
+      row.certificado_senha
+    );
+
+    if (!resultado.ok) {
+      res.status(400).json(resultado);
+      return;
+    }
+
+    res.json({
+      success: true,
+      message: 'Certificado válido.',
+      certificado: {
+        serialNumber: resultado.info.serialNumber,
+        validFrom: resultado.info.validFrom,
+        validTo: resultado.info.validTo,
+        subject: resultado.info.subject,
+        issuer: resultado.info.issuer
+      }
+    });
   });
 });
 
