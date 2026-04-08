@@ -401,7 +401,7 @@ function inicializarBanco() {
 
     // Tabela fiscal da empresa
     db.run(`
-      CREATE TABLE IF NOT EXISTS empresa_fiscal (
+      CREATE TABLE IF NOT EXISTS configuracao_fiscal (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         razao_social TEXT NOT NULL,
         nome_fantasia TEXT,
@@ -430,8 +430,8 @@ function inicializarBanco() {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )
     `, (err) => {
-      if (err) console.error('Erro ao criar tabela empresa_fiscal:', err);
-      else console.log('Tabela empresa_fiscal criada/verificada');
+      if (err) console.error('Erro ao criar tabela configuracao_fiscal:', err);
+      else console.log('Tabela configuracao_fiscal criada/verificada');
     });
 
     // Tabela de configurações (criar por último)

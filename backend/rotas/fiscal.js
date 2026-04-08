@@ -36,7 +36,7 @@ function tratarErro(res, error) {
 router.get('/config', (req, res) => {
   db.get(`
     SELECT *
-    FROM empresa_fiscal
+    FROM configuracao_fiscal
     ORDER BY id DESC
     LIMIT 1
   `, [], (err, row) => {
@@ -125,7 +125,7 @@ router.post('/config', (req, res) => {
   }
 
   // verificar se já existe configuração
-  db.get(`SELECT id FROM empresa_fiscal LIMIT 1`, [], (err, existente) => {
+  db.get(`SELECT id FROM configuracao_fiscal LIMIT 1`, [], (err, existente) => {
     if (err) {
       tratarErro(res, err);
       return;
@@ -134,7 +134,7 @@ router.post('/config', (req, res) => {
     if (existente) {
       // UPDATE
       db.run(`
-        UPDATE empresa_fiscal SET
+        UPDATE configuracao_fiscal SET
           cnpj = ?,
           razao_social = ?,
           nome_fantasia = ?,
@@ -190,9 +190,49 @@ router.post('/config', (req, res) => {
       });
 
     } else {
-      // INSERT
+      // INSERT com valores base
+      const configBase = {
+        cnpj: '65957340000150',
+        razao_social: 'ESQUINAO DA ECONOMIA LTDA',
+        nome_fantasia: 'ESQUINAO DA ECONOMIA',
+        ie: '073252638',
+        logradouro: 'R VEREADOR JOSE RODRIGUES SOARES',
+        numero: '268',
+        bairro: 'PIRAJA',
+        municipio: 'JUAZEIRO DO NORTE',
+        uf: 'CE',
+        cep: '63034050',
+        cnae_principal: '47.12-1-00',
+        ambiente: 'homologacao',
+        serie_nfce: 1,
+        proximo_numero_nfce: 1
+      };
+
+      // Usar valores fornecidos ou base
+      const valoresFinais = {
+        cnpj: cnpjLimpo || configBase.cnpj,
+        razao_social: razao_social || configBase.razao_social,
+        nome_fantasia: nome_fantasia || configBase.nome_fantasia,
+        ie: ie || configBase.ie,
+        crt: crt || 1,
+        logradouro: logradouro || configBase.logradouro,
+        numero: numero || configBase.numero,
+        complemento: complemento || '',
+        bairro: bairro || configBase.bairro,
+        codigo_municipio: codigo_municipio || '',
+        municipio: municipio || configBase.municipio,
+        uf: uf || configBase.uf,
+        cep: cep || configBase.cep,
+        cnae_principal: cnae_principal || configBase.cnae_principal,
+        ambiente: ambiente || configBase.ambiente,
+        serie_nfce: Number(serie_nfce || configBase.serie_nfce),
+        proximo_numero_nfce: Number(proximo_numero_nfce || configBase.proximo_numero_nfce),
+        CSC: cscFinal,
+        CSC_ID: cscIdFinal
+      };
+
       db.run(`
-        INSERT INTO empresa_fiscal (
+        INSERT INTO configuracao_fiscal (
           cnpj,
           razao_social,
           nome_fantasia,
@@ -216,25 +256,25 @@ router.post('/config', (req, res) => {
           updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       `, [
-        cnpjLimpo,
-        razao_social,
-        nome_fantasia,
-        ie,
-        crt || 1,
-        logradouro || '',
-        numero || '',
-        complemento || '',
-        bairro || '',
-        codigo_municipio || '',
-        municipio,
-        uf,
-        cep || '',
-        cnae_principal || '',
-        ambiente || 'homologacao',
-        Number(serie_nfce || 1),
-        Number(proximo_numero_nfce || 1),
-        cscFinal,
-        cscIdFinal
+        valoresFinais.cnpj,
+        valoresFinais.razao_social,
+        valoresFinais.nome_fantasia,
+        valoresFinais.ie,
+        valoresFinais.crt,
+        valoresFinais.logradouro,
+        valoresFinais.numero,
+        valoresFinais.complemento,
+        valoresFinais.bairro,
+        valoresFinais.codigo_municipio,
+        valoresFinais.municipio,
+        valoresFinais.uf,
+        valoresFinais.cep,
+        valoresFinais.cnae_principal,
+        valoresFinais.ambiente,
+        valoresFinais.serie_nfce,
+        valoresFinais.proximo_numero_nfce,
+        valoresFinais.CSC,
+        valoresFinais.CSC_ID
       ], function(errInsert) {
         if (errInsert) {
           tratarErro(res, errInsert);
@@ -273,7 +313,7 @@ router.post('/config/certificado', uploadCertificado.single('certificado'), (req
       return;
     }
 
-    db.get(`SELECT id FROM empresa_fiscal LIMIT 1`, [], (err, existente) => {
+    db.get(`SELECT id FROM configuracao_fiscal LIMIT 1`, [], (err, existente) => {
       if (err) {
         tratarErro(res, err);
         return;
@@ -287,7 +327,7 @@ router.post('/config/certificado', uploadCertificado.single('certificado'), (req
       }
 
       db.run(`
-        UPDATE empresa_fiscal
+        UPDATE configuracao_fiscal
         SET
           certificado_path = ?,
           certificado_senha = ?,
@@ -338,7 +378,7 @@ router.get('/config/certificado/testar', (req, res) => {
       certificado_validade_inicio,
       certificado_validade_fim,
       certificado_serial
-    FROM empresa_fiscal
+    FROM configuracao_fiscal
     ORDER BY id DESC
     LIMIT 1
   `, [], (err, row) => {
