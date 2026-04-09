@@ -472,6 +472,7 @@ function garantirColunasCompras() {
       !colunas.includes('forma_pagamento') && `ALTER TABLE compras ADD COLUMN forma_pagamento TEXT`,
       !colunas.includes('data_vencimento') && `ALTER TABLE compras ADD COLUMN data_vencimento DATE`,
       !colunas.includes('parcelas') && `ALTER TABLE compras ADD COLUMN parcelas INTEGER DEFAULT 1`,
+      !colunas.includes('valor_entrada') && `ALTER TABLE compras ADD COLUMN valor_entrada DECIMAL(10,2) DEFAULT 0`,
       !colunas.includes('observacao') && `ALTER TABLE compras ADD COLUMN observacao TEXT`,
       !colunas.includes('chave_acesso') && `ALTER TABLE compras ADD COLUMN chave_acesso TEXT`,
       !colunas.includes('xml_importado_em') && `ALTER TABLE compras ADD COLUMN xml_importado_em DATETIME`

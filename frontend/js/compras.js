@@ -1,13 +1,16 @@
 let produtosList = [];
+let fornecedoresList = [];
 let itensCompraAtual = [];
 let compraImportadaXml = null;
 
 function loadCompras() {
     $.when(
         $.ajax({ url: `${API_URL}/produtos`, method: 'GET' }),
-        $.ajax({ url: `${API_URL}/compras`, method: 'GET' })
-    ).done(function(produtosResp, comprasResp) {
+        $.ajax({ url: `${API_URL}/compras`, method: 'GET' }),
+        $.ajax({ url: `${API_URL}/fornecedores`, method: 'GET' })
+    ).done(function(produtosResp, comprasResp, fornecedoresResp) {
         produtosList = produtosResp[0] || [];
+        fornecedoresList = fornecedoresResp[0] || [];
         renderCompras(comprasResp[0] || []);
     }).fail(function() {
         $('#page-content').html('<div class="alert alert-danger">Erro ao carregar compras.</div>');
@@ -65,7 +68,7 @@ function renderCompras(compras) {
 }
 
 function rotuloCondicaoPagamento(value) {
-    const mapa = { avista: 'À vista', prazo: 'A prazo', parcelado: 'Parcelado' };
+    const mapa = { avista: 'À vista', prazo: 'A prazo', parcelado: 'Parcelado', entrada_parcelado: 'Entrada + Parcelamento' };
     return mapa[value] || value || '-';
 }
 
@@ -95,17 +98,77 @@ function atualizarVisibilidadePagamentoCompra() {
     if (condicao === 'avista') {
         $('#grupo_vencimento_compra').hide();
         $('#grupo_parcelas_compra').hide();
+        $('#grupo_entrada_compra').hide();
         $('#data_vencimento').val($('#data_compra').val());
         $('#parcelas').val(1);
+        $('#valor_entrada').val(0);
     } else if (condicao === 'prazo') {
         $('#grupo_vencimento_compra').show();
-        $('#grupo_parcelas_compra').hide();
-        $('#parcelas').val(1);
-    } else {
+        $('#grupo_parcelas_compra').show();
+        $('#grupo_entrada_compra').hide();
+        if (parseInt($('#parcelas').val(), 10) < 1) $('#parcelas').val(1);
+        $('#valor_entrada').val(0);
+    } else if (condicao === 'parcelado') {
         $('#grupo_vencimento_compra').show();
         $('#grupo_parcelas_compra').show();
-        if (parseInt($('#parcelas').val(), 10) < 2) $('#parcelas').val(2);
+        $('#grupo_entrada_compra').hide();
+        if (parseInt($('#parcelas').val(), 10) < 1) $('#parcelas').val(1);
+        $('#valor_entrada').val(0);
+    } else if (condicao === 'entrada_parcelado') {
+        $('#grupo_vencimento_compra').show();
+        $('#grupo_parcelas_compra').show();
+        $('#grupo_entrada_compra').show();
+        if (parseInt($('#parcelas').val(), 10) < 1) $('#parcelas').val(1);
     }
+    calcularParcelasCompra();
+}
+
+function calcularParcelasCompra() {
+    const total = itensCompraAtual.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    const parcelas = parseInt($('#parcelas').val(), 10) || 1;
+    const dataVencimento = $('#data_vencimento').val();
+    const condicao = $('#condicao_pagamento').val();
+    const valorEntrada = Number($('#valor_entrada').val()) || 0;
+
+    if (!dataVencimento || (parcelas <= 1 && condicao !== 'entrada_parcelado')) {
+        $('#parcelas_detalhes').html('');
+        return;
+    }
+
+    let html = '<h6>Parcelas:</h6><ul class="list-group list-group-flush">';
+    const dataBase = new Date(dataVencimento);
+
+    if (condicao === 'entrada_parcelado' && valorEntrada > 0) {
+        // Entrada
+        html += `<li class="list-group-item d-flex justify-content-between">
+            <span>Entrada</span>
+            <span>${formatCurrency(valorEntrada)} - ${dataBase.toISOString().split('T')[0]}</span>
+        </li>`;
+        // Parcelas restantes
+        const valorRestante = total - valorEntrada;
+        const valorParcela = valorRestante / parcelas;
+        for (let i = 0; i < parcelas; i++) {
+            const dataParcela = new Date(dataBase);
+            dataParcela.setMonth(dataBase.getMonth() + i);
+            html += `<li class="list-group-item d-flex justify-content-between">
+                <span>Parcela ${i + 1}</span>
+                <span>${formatCurrency(valorParcela)} - ${dataParcela.toISOString().split('T')[0]}</span>
+            </li>`;
+        }
+    } else {
+        // Parcelas normais
+        const valorParcela = total / parcelas;
+        for (let i = 0; i < parcelas; i++) {
+            const dataParcela = new Date(dataBase);
+            dataParcela.setMonth(dataBase.getMonth() + i);
+            html += `<li class="list-group-item d-flex justify-content-between">
+                <span>Parcela ${i + 1}</span>
+                <span>${formatCurrency(valorParcela)} - ${dataParcela.toISOString().split('T')[0]}</span>
+            </li>`;
+        }
+    }
+    html += '</ul>';
+    $('#parcelas_detalhes').html(html);
 }
 
 function formatNumberInput(value, decimals = 2) {
@@ -117,6 +180,7 @@ function normalizeItemCompra(item = {}) {
     const custo = Number(item.preco_unitario || item.preco_compra || 0);
     const quantidade = Number(item.quantidade || 1);
     const margem = Number(item.margem_lucro ?? item.lucro_percentual ?? 30);
+    const ultimoPrecoCompra = Number(item.ultimo_preco_compra || custo);
     const precoVenda = Number(item.preco_venda_sugerido || item.preco_venda || (custo * (1 + margem / 100)) || 0);
     return {
         produto_id: item.produto_id ? Number(item.produto_id) : '',
@@ -126,6 +190,7 @@ function normalizeItemCompra(item = {}) {
         ncm: item.ncm || '',
         quantidade,
         preco_unitario: Number(custo.toFixed(2)),
+        ultimo_preco_compra: Number(ultimoPrecoCompra.toFixed(2)),
         margem_lucro: Number(margem.toFixed(2)),
         preco_venda_sugerido: Number(precoVenda.toFixed(2)),
         subtotal: Number((quantidade * custo).toFixed(2))
@@ -161,18 +226,22 @@ function renderItensCompraTabela() {
                 <select class="form-control form-control-sm mb-1" onchange="alterarProdutoItemCompra(${index}, this.value)">
                     ${optionsProdutos.replace(`value="${item.produto_id}"`, `value="${item.produto_id}" selected`)}
                 </select>
-                <input type="text" class="form-control form-control-sm" value="${escapeHtml(item.produto_nome || '')}" oninput="alterarCampoItemCompra(${index}, 'produto_nome', this.value)">
+                <div>${escapeHtml(item.produto_nome || '')}</div>
             </td>
-            <td style="min-width:120px;"><input type="text" class="form-control form-control-sm" value="${escapeHtml(item.codigo_barras || '')}" oninput="alterarCampoItemCompra(${index}, 'codigo_barras', this.value)"></td>
-            <td style="min-width:90px;"><input type="number" step="0.01" class="form-control form-control-sm" value="${formatNumberInput(item.quantidade)}" oninput="alterarNumeroItemCompra(${index}, 'quantidade', this.value, 'custo')"></td>
-            <td style="min-width:110px;"><input type="number" step="0.01" class="form-control form-control-sm" value="${formatNumberInput(item.preco_unitario)}" oninput="alterarNumeroItemCompra(${index}, 'preco_unitario', this.value, 'custo')"></td>
-            <td style="min-width:95px;"><input type="number" step="0.01" class="form-control form-control-sm" value="${formatNumberInput(item.margem_lucro)}" oninput="alterarNumeroItemCompra(${index}, 'margem_lucro', this.value, 'margem')"></td>
-            <td style="min-width:110px;"><input type="number" step="0.01" class="form-control form-control-sm" value="${formatNumberInput(item.preco_venda_sugerido)}" oninput="alterarNumeroItemCompra(${index}, 'preco_venda_sugerido', this.value, 'venda')"></td>
+            <td style="min-width:120px;">${escapeHtml(item.codigo_barras || '')}</td>
+            <td style="min-width:90px;">${formatNumberInput(item.quantidade)}</td>
+            <td style="min-width:110px;">${formatCurrency(item.preco_unitario)}</td>
+            <td style="min-width:95px;">${formatNumberInput(item.margem_lucro)}%</td>
+            <td style="min-width:110px;">${formatCurrency(item.preco_venda_sugerido)}</td>
             <td>${formatCurrency(item.subtotal)}</td>
-            <td><button class="btn btn-sm btn-danger" onclick="removerItemCompra(${index})"><i class="fas fa-trash"></i></button></td>
+            <td>
+                <button class="btn btn-sm btn-warning me-1" onclick="editarItemCompra(${index})"><i class="fas fa-edit"></i></button>
+                <button class="btn btn-sm btn-danger" onclick="removerItemCompra(${index})"><i class="fas fa-trash"></i></button>
+            </td>
         </tr>
     `).join('') || '<tr><td colspan="8" class="text-center">Nenhum item adicionado.</td></tr>');
     $('#totalCompra').text(formatCurrency(total));
+    calcularParcelasCompra();
 }
 
 function escapeHtml(value) {
@@ -187,6 +256,9 @@ function escapeHtml(value) {
 function alterarCampoItemCompra(index, campo, valor) {
     if (!itensCompraAtual[index]) return;
     itensCompraAtual[index][campo] = valor;
+    if (campo === 'produto_nome' && String(valor).trim() === '') {
+        itensCompraAtual[index].produto_id = '';
+    }
 }
 
 function alterarNumeroItemCompra(index, campo, valor, origem) {
@@ -208,6 +280,7 @@ function alterarProdutoItemCompra(index, produtoId) {
         if (!Number(itensCompraAtual[index].preco_unitario)) {
             itensCompraAtual[index].preco_unitario = Number(produto.preco_compra || 0);
         }
+        itensCompraAtual[index].ultimo_preco_compra = Number(produto.preco_compra || 0);
         if (!Number(itensCompraAtual[index].preco_venda_sugerido)) {
             itensCompraAtual[index].preco_venda_sugerido = Number(produto.preco_venda || 0);
         }
@@ -222,13 +295,23 @@ function alterarProdutoItemCompra(index, produtoId) {
 function adicionarItemCompra() {
     const produtoId = $('#produto_id_item').val();
     const descricaoLivre = ($('#codigo_barras_item').val() || '').trim();
-    const quantidade = parseFloat($('#quantidade_item').val());
-    const preco = parseFloat($('#preco_item').val());
-    const margem = parseFloat($('#margem_padrao_item').val()) || 30;
+    const quantidade = Number($('#quantidade_item').val());
+    const preco = Number($('#preco_item').val());
+    const margemInput = Number($('#margem_padrao_item').val());
+    const precoVendaInput = Number($('#preco_venda_item').val());
+    const margem = Number.isFinite(margemInput) ? margemInput : 30;
 
     if ((!produtoId && !descricaoLivre) || !quantidade || !preco) {
         showNotification('Informe produto ou descrição, quantidade e preço.', 'warning');
         return;
+    }
+
+    let margemFinal = margem;
+    let precoVenda = preco * (1 + margem / 100);
+
+    if (Number.isFinite(precoVendaInput) && precoVendaInput > 0) {
+        precoVenda = precoVendaInput;
+        margemFinal = preco > 0 ? ((precoVenda - preco) / preco) * 100 : 0;
     }
 
     const produto = produtosList.find(p => String(p.id) === String(produtoId));
@@ -238,8 +321,9 @@ function adicionarItemCompra() {
         codigo_barras: produto ? (produto.codigo_barras || produto.codigo || '') : '',
         quantidade,
         preco_unitario: preco,
-        margem_lucro: margem,
-        preco_venda: preco * (1 + margem / 100),
+        ultimo_preco_compra: produto ? Number(produto.preco_compra || 0) : preco,
+        margem_lucro: margemFinal,
+        preco_venda_sugerido: precoVenda,
         unidade: produto ? (produto.unidade || 'UN') : 'UN',
         ncm: produto ? (produto.ncm || '') : ''
     });
@@ -255,12 +339,42 @@ function limparFormularioItemCompra() {
     $('#quantidade_item').val('1');
     $('#preco_item').val('');
     $('#margem_padrao_item').val('30');
+    $('#preco_venda_item').val('');
     $('#codigo_barras_item').focus();
 }
 
-function removerItemCompra(index) {
+function calcularValorVendaItem() {
+    const preco = Number($('#preco_item').val()) || 0;
+    const margem = Number($('#margem_padrao_item').val()) || 30;
+    const valorVenda = preco * (1 + margem / 100);
+    $('#preco_venda_item').val(formatNumberInput(valorVenda));
+}
+
+function calcularMargemItem() {
+    const preco = Number($('#preco_item').val()) || 0;
+    const valorVenda = Number($('#preco_venda_item').val()) || 0;
+    if (preco > 0) {
+        const margem = ((valorVenda - preco) / preco) * 100;
+        $('#margem_padrao_item').val(formatNumberInput(margem));
+    }
+}
+
+function editarItemCompra(index) {
+    const item = itensCompraAtual[index];
+    if (!item) return;
+    // Preencher os campos do formulário
+    $('#codigo_barras_item').val(item.produto_nome || item.codigo_barras || '');
+    $('#produto_id_item').val(item.produto_id || '');
+    $('#quantidade_item').val(formatNumberInput(item.quantidade));
+    $('#preco_item').val(formatNumberInput(item.preco_unitario));
+    $('#margem_padrao_item').val(formatNumberInput(item.margem_lucro));
+    $('#preco_venda_item').val(formatNumberInput(item.preco_venda_sugerido));
+    // Recalcular para consistência
+    calcularValorVendaItem();
+    // Remover o item da lista
     itensCompraAtual.splice(index, 1);
     renderItensCompraTabela();
+    $('#codigo_barras_item').focus();
 }
 
 function parseChaveAcessoInfo(chave) {
@@ -325,19 +439,81 @@ function preencherCompraImportada(resp) {
     renderItensCompraTabela();
 }
 
+function onFornecedorInput() {
+    const inputValue = $('#fornecedor').val();
+    if (!inputValue) return;
+    const fornecedor = fornecedoresList.find(f => String(f.nome || '').toLowerCase() === inputValue.trim().toLowerCase());
+    if (fornecedor) {
+        $('#fornecedor').val(fornecedor.nome);
+    }
+}
+
+function onFornecedorKeyDown(event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const inputValue = $('#fornecedor').val().trim();
+    if (!inputValue) return;
+    const fornecedor = fornecedoresList.find(f => String(f.nome || '').toLowerCase() === inputValue.toLowerCase());
+    if (fornecedor) {
+        $('#fornecedor').val(fornecedor.nome);
+    }
+}
+
 function onProdutoInput() {
     const inputValue = $('#codigo_barras_item').val().trim();
     if (!inputValue) {
         $('#produto_id_item').val('');
         return;
     }
-    const cleaned = inputValue.replace(/\s+-\s+.*$/, '');
-    const produto = produtosList.find(p => [p.codigo, p.codigo_barras].includes(cleaned) || String(p.nome || '').toLowerCase() === inputValue.toLowerCase());
+    const produto = findProdutoByInput(inputValue);
     if (produto) {
         $('#produto_id_item').val(produto.id);
         $('#preco_item').val(produto.preco_compra || '');
         $('#margem_padrao_item').val(produto.lucro_percentual || 30);
+        calcularValorVendaItem();
+    } else {
+        $('#produto_id_item').val('');
     }
+}
+
+function onProdutoKeyDown(event) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const inputValue = $('#codigo_barras_item').val().trim();
+    if (!inputValue) return;
+    const produto = findProdutoByInput(inputValue);
+    if (!produto) return;
+
+    $('#produto_id_item').val(produto.id);
+    $('#preco_item').val(produto.preco_compra || '');
+    $('#margem_padrao_item').val(produto.lucro_percentual || 30);
+    calcularValorVendaItem();
+    $('#codigo_barras_item').val(`${produto.codigo_barras || produto.codigo || ''} - ${produto.nome}`);
+    if (parseFloat($('#quantidade_item').val()) > 0 && parseFloat($('#preco_item').val()) > 0) {
+        adicionarItemCompra();
+    } else {
+        $('#quantidade_item').focus();
+    }
+}
+
+function findFornecedorByTerm(term) {
+    const lower = term.toLowerCase();
+    return fornecedoresList.find(f => {
+        const nome = String(f.nome || '').toLowerCase();
+        const contato = String(f.contato || '').toLowerCase();
+        return nome === lower || nome.startsWith(lower) || contato.includes(lower);
+    });
+}
+
+function findProdutoByInput(input) {
+    const cleaned = input.replace(/\s+-\s+.*$/, '').trim();
+    const lower = input.toLowerCase().trim();
+    return produtosList.find(p => {
+        const codigo = String(p.codigo || '').trim();
+        const codigoBarras = String(p.codigo_barras || '').trim();
+        const nome = String(p.nome || '').toLowerCase().trim();
+        return codigo === cleaned || codigoBarras === cleaned || nome === lower;
+    });
 }
 
 function showCompraModal() {
@@ -349,7 +525,7 @@ function showCompraModal() {
             <div class="modal-dialog modal-xl modal-dialog-scrollable">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Nova compra</h5>
+                        <h5 class="modal-title">Lançamento de Nova compra / NF-e </h5>
                         <div>
                             <button type="button" class="btn btn-sm btn-light me-1" title="Minimizar" onclick="minimizarModal('compraModal')">
                                 <i class="fas fa-window-minimize"></i>
@@ -391,29 +567,10 @@ function showCompraModal() {
                             </div>
                             <div class="col-md-6 mb-3">
                                 <label class="form-label">Fornecedor</label>
-                                <input type="text" class="form-control" id="fornecedor">
-                            </div>
-                        </div>
-                        <div class="row g-2">
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Condição de pagamento *</label>
-                                <select class="form-control" id="condicao_pagamento" onchange="atualizarVisibilidadePagamentoCompra()">
-                                    <option value="avista">À vista</option>
-                                    <option value="prazo">A prazo</option>
-                                    <option value="parcelado">Parcelado</option>
-                                </select>
-                            </div>
-                            <div class="col-md-4 mb-3">
-                                <label class="form-label">Forma de pagamento</label>
-                                <select class="form-control" id="forma_pagamento"><option value="">Selecione</option>${formasPagamentoCompra()}</select>
-                            </div>
-                            <div class="col-md-2 mb-3" id="grupo_vencimento_compra" style="display:none;">
-                                <label class="form-label">1º vencimento</label>
-                                <input type="date" class="form-control" id="data_vencimento" value="${hoje}">
-                            </div>
-                            <div class="col-md-2 mb-3" id="grupo_parcelas_compra" style="display:none;">
-                                <label class="form-label">Parcelas</label>
-                                <input type="number" min="2" class="form-control" id="parcelas" value="2">
+                                <input type="text" class="form-control" id="fornecedor" list="fornecedores-datalist" autocomplete="off" oninput="onFornecedorInput()" onkeydown="onFornecedorKeyDown(event)">
+                                <datalist id="fornecedores-datalist">
+                                    ${fornecedoresList.map(f => `<option value="${escapeHtml(f.nome || '')}"></option>`).join('')}
+                                </datalist>
                             </div>
                         </div>
                         <div class="mb-3">
@@ -425,12 +582,12 @@ function showCompraModal() {
                         <div class="row g-2 align-items-end">
                             <div class="col-md-4">
                                 <label class="form-label">Código de barras / descrição rápida</label>
-                                <input type="text" class="form-control" id="codigo_barras_item" placeholder="Leitor, código ou nome" list="produtos-datalist" oninput="onProdutoInput()">
+                                <input type="text" class="form-control" id="codigo_barras_item" placeholder="Leitor, código ou nome" list="produtos-datalist" autocomplete="off" oninput="onProdutoInput()" onkeydown="onProdutoKeyDown(event)">
                                 <datalist id="produtos-datalist">
                                     ${produtosList.map(p => `<option value="${escapeHtml((p.codigo_barras || p.codigo || '') + ' - ' + p.nome)}"></option>`).join('')}
                                 </datalist>
                             </div>
-                            <div class="col-md-3">
+                            <div class="col-md-2">
                                 <label class="form-label">Produto</label>
                                 <select class="form-control" id="produto_id_item">
                                     <option value="">Selecione</option>
@@ -441,13 +598,17 @@ function showCompraModal() {
                                 <label class="form-label">Qtd</label>
                                 <input type="number" step="0.01" class="form-control" id="quantidade_item" value="1">
                             </div>
-                            <div class="col-md-2">
+                            <div class="col-md-1">
                                 <label class="form-label">Preço compra</label>
-                                <input type="number" step="0.01" class="form-control" id="preco_item">
+                                <input type="number" step="0.01" class="form-control" id="preco_item" oninput="calcularValorVendaItem()">
                             </div>
                             <div class="col-md-1">
                                 <label class="form-label">Margem %</label>
-                                <input type="number" step="0.01" class="form-control" id="margem_padrao_item" value="30">
+                                <input type="number" step="0.01" class="form-control" id="margem_padrao_item" value="30" oninput="calcularValorVendaItem()">
+                            </div>
+                            <div class="col-md-1">
+                                <label class="form-label">Valor venda</label>
+                                <input type="number" step="0.01" class="form-control" id="preco_venda_item" oninput="calcularMargemItem()">
                             </div>
                             <div class="col-md-1">
                                 <button class="btn btn-success w-100" onclick="adicionarItemCompra()"><i class="fas fa-plus"></i></button>
@@ -467,11 +628,42 @@ function showCompraModal() {
                                         <th></th>
                                     </tr>
                                 </thead>
+                                
                                 <tbody id="itensCompraBody"></tbody>
                                 <tfoot><tr><th colspan="6" class="text-end">Total</th><th id="totalCompra">${formatCurrency(0)}</th><th></th></tr></tfoot>
                             </table>
+                            <div class="row g-2">
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">Condição de pagamento *</label>
+                                <select class="form-control" id="condicao_pagamento" onchange="atualizarVisibilidadePagamentoCompra()">
+                                    <option value="avista">À vista</option>
+                                    <option value="prazo">A prazo</option>
+                                    <option value="parcelado">Parcelado</option>
+                                    <option value="entrada_parcelado">Entrada + Parcelamento</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3 mb-3">
+                                <label class="form-label">Forma de pagamento</label>
+                                <select class="form-control" id="forma_pagamento"><option value="">Selecione</option>${formasPagamentoCompra()}</select>
+                            </div>
+                            <div class="col-md-2 mb-3" id="grupo_entrada_compra" style="display:none;">
+                                <label class="form-label">Valor entrada</label>
+                                <input type="number" step="0.01" class="form-control" id="valor_entrada" value="0" onchange="calcularParcelasCompra()">
+                            </div>
+                            <div class="col-md-2 mb-3" id="grupo_parcelas_compra" style="display:none;">
+                                <label class="form-label">Parcelas após entrada</label>
+                                <input type="number" min="1" class="form-control" id="parcelas" value="1" onchange="calcularParcelasCompra()">
+                                <small class="text-muted">Informe quantas parcelas serão geradas após a entrada.</small>
+                            </div>
+                            <div class="col-md-2 mb-3" id="grupo_vencimento_compra" style="display:none;">
+                                <label class="form-label">1º vencimento</label>
+                                <input type="date" class="form-control" id="data_vencimento" value="${hoje}" onchange="calcularParcelasCompra()">
+                            </div>
+                        </div>
+                        <div id="parcelas_detalhes" class="mb-3"></div>
                         </div>
                     </div>
+                    
                     <div class="modal-footer">
                         <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
                         <button type="button" class="btn btn-primary" onclick="saveCompra()">Salvar compra</button>
@@ -494,6 +686,15 @@ function saveCompra() {
     }
 
     const total = itensCompraAtual.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);
+    const condicaoPagamento = $('#condicao_pagamento').val();
+    const valorEntrada = Number($('#valor_entrada').val()) || 0;
+    const parcelas = parseInt($('#parcelas').val(), 10) || 1;
+
+    if (condicaoPagamento === 'entrada_parcelado' && valorEntrada <= 0) {
+        showNotification('Informe o valor da entrada para Entrada + Parcelamento.', 'warning');
+        return;
+    }
+
     const data = {
         nota_fiscal: $('#nota_fiscal').val(),
         chave_acesso: $('#chave_acesso').val(),
@@ -512,10 +713,11 @@ function saveCompra() {
             preco_venda_sugerido: Number(item.preco_venda_sugerido || 0),
             subtotal: Number(item.subtotal || 0)
         })),
-        condicao_pagamento: $('#condicao_pagamento').val(),
+        condicao_pagamento: condicaoPagamento,
         forma_pagamento: $('#forma_pagamento').val(),
         data_vencimento: $('#data_vencimento').val(),
-        parcelas: parseInt($('#parcelas').val(), 10) || 1,
+        parcelas,
+        valor_entrada: valorEntrada,
         observacao: $('#observacao_compra').val()
     };
 

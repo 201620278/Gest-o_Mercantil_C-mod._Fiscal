@@ -86,6 +86,7 @@ function criarFinanceiroCompra(compra, callback) {
     forma_pagamento,
     data_vencimento,
     parcelas,
+    valor_entrada,
     observacao
   } = compra;
 
@@ -138,6 +139,44 @@ function criarFinanceiroCompra(compra, callback) {
           vencimento: addMonths(vencimentoBase, i - 1),
           numero_parcela: i,
           total_parcelas: qtdParcelas,
+          status: 'pendente'
+        }, (err) => {
+          if (err) return callback(err);
+          pendentes -= 1;
+          if (pendentes === 0) callback(null);
+        });
+      }
+      return;
+    }
+
+    if (condicao_pagamento === 'entrada_parcelado' && qtdParcelas > 0 && valor_entrada > 0) {
+      const totalParcelas = qtdParcelas + 1;
+      let pendentes = totalParcelas;
+      // Entrada
+      inserir({
+        descricao: `${descricaoBase} - Entrada`,
+        valor: valor_entrada,
+        vencimento: data_compra,
+        numero_parcela: 1,
+        total_parcelas: totalParcelas,
+        status: 'pago'
+      }, (err) => {
+        if (err) return callback(err);
+        pendentes -= 1;
+        if (pendentes === 0) callback(null);
+      });
+      // Parcelas restantes
+      const valorRestante = valorTotal - valor_entrada;
+      const valorBase = Math.floor((valorRestante / qtdParcelas) * 100) / 100;
+      const resto = Math.round((valorRestante - (valorBase * qtdParcelas)) * 100) / 100;
+      for (let i = 1; i <= qtdParcelas; i++) {
+        const valorParcela = Number((valorBase + (i === qtdParcelas ? resto : 0)).toFixed(2));
+        inserir({
+          descricao: `${descricaoBase} - Parcela ${i + 1}/${totalParcelas}`,
+          valor: valorParcela,
+          vencimento: addMonths(vencimentoBase, i - 1),
+          numero_parcela: i + 1,
+          total_parcelas: totalParcelas,
           status: 'pendente'
         }, (err) => {
           if (err) return callback(err);
@@ -304,9 +343,13 @@ router.post('/importar-xml', upload.single('xml'), (req, res) => {
           produto_nome: produto.nome || item.produto_nome,
           unidade: produto.unidade || item.unidade,
           ncm: produto.ncm || item.ncm,
+          ultimo_preco_compra: Number(produto.preco_compra || 0),
           margem_lucro: Number(produto.lucro_percentual || 30),
-          preco_venda_sugerido: Number(produto.preco_venda || (Number(item.preco_unitario || 0) * 1.3)).toFixed(2)
-        } : item;
+          preco_venda_sugerido: Number((Number(produto.preco_compra || 0) * (1 + (Number(produto.lucro_percentual || 30) / 100)))).toFixed(2)
+        } : {
+          ...item,
+          ultimo_preco_compra: Number(item.preco_unitario || 0)
+        };
       });
       res.json(nota);
     });
@@ -370,6 +413,7 @@ router.post('/', (req, res) => {
     forma_pagamento,
     data_vencimento,
     parcelas,
+    valor_entrada,
     observacao
   } = req.body;
 
@@ -390,8 +434,8 @@ router.post('/', (req, res) => {
     db.run(`
       INSERT INTO compras (
         nota_fiscal, chave_acesso, data_compra, fornecedor, total, status,
-        condicao_pagamento, forma_pagamento, data_vencimento, parcelas, observacao, xml_importado_em
-      ) VALUES (?, ?, ?, ?, ?, 'concluida', ?, ?, ?, ?, ?, ?)
+        condicao_pagamento, forma_pagamento, data_vencimento, parcelas, valor_entrada, observacao, xml_importado_em
+      ) VALUES (?, ?, ?, ?, ?, 'concluida', ?, ?, ?, ?, ?, ?, ?)
     `, [
       nota_fiscal || null,
       digitsOnly(chave_acesso) || null,
@@ -401,7 +445,8 @@ router.post('/', (req, res) => {
       condicao,
       forma_pagamento || null,
       data_vencimento || (condicao === 'avista' ? data_compra : null),
-      condicao === 'parcelado' ? qtdParcelas : 1,
+      condicao === 'parcelado' || condicao === 'entrada_parcelado' ? qtdParcelas : 1,
+      Number(valor_entrada) || 0,
       observacao || null,
       digitsOnly(chave_acesso) ? moment().format('YYYY-MM-DD HH:mm:ss') : null
     ], function(err) {
@@ -426,7 +471,8 @@ router.post('/', (req, res) => {
           condicao_pagamento: condicao,
           forma_pagamento,
           data_vencimento,
-          parcelas: condicao === 'parcelado' ? qtdParcelas : 1,
+          parcelas: (condicao === 'parcelado' || condicao === 'entrada_parcelado') ? qtdParcelas : 1,
+          valor_entrada: Number(valor_entrada) || 0,
           observacao
         }, (finErr) => {
           if (finErr) {

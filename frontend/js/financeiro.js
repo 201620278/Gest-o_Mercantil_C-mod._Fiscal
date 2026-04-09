@@ -147,8 +147,11 @@ function renderFinanceiro(movimentacoes, resumo, filtros) {
                         </tr>
                     </thead>
                     <tbody>
-                        ${movimentacoes.map(m => `
-                            <tr>
+                        ${movimentacoes.map(m => {
+                            const hasReference = m.referencia_id && (m.referencia_tipo === 'compra' || m.referencia_tipo === 'venda');
+                            const rowAction = hasReference ? `onclick="abrirReferenciaFinanceira(${m.referencia_id}, '${m.referencia_tipo}')" style="cursor:pointer"` : '';
+                            return `
+                            <tr ${rowAction}>
                                 <td>${formatDate(m.vencimento || m.data_movimento)}</td>
                                 <td><span class="badge bg-${m.tipo === 'receita' ? 'success' : 'danger'}">${m.tipo}</span></td>
                                 <td>${m.origem || '-'}</td>
@@ -159,18 +162,31 @@ function renderFinanceiro(movimentacoes, resumo, filtros) {
                                 <td>${nomeFormaPagamento(m.forma_pagamento)}</td>
                                 <td class="${m.tipo === 'receita' ? 'text-success' : 'text-danger'}">${formatCurrency(m.valor)}</td>
                                 <td class="text-nowrap">
-                                    ${(m.status === 'pendente') ? `<button class="btn btn-sm btn-success" onclick="baixarMovimentacao(${m.id})"><i class="fas fa-check"></i></button>` : ''}
-                                    <button class="btn btn-sm btn-warning" onclick="editMovimentacao(${m.id})"><i class="fas fa-edit"></i></button>
-                                    ${(m.origem === 'manual' || !m.origem) ? `<button class="btn btn-sm btn-danger" onclick="deleteMovimentacao(${m.id})"><i class="fas fa-trash"></i></button>` : ''}
+                                    ${(m.status === 'pendente') ? `<button class="btn btn-sm btn-success" onclick="event.stopPropagation(); baixarMovimentacao(${m.id})"><i class="fas fa-check"></i></button>` : ''}
+                                    <button class="btn btn-sm btn-warning" onclick="event.stopPropagation(); editMovimentacao(${m.id})"><i class="fas fa-edit"></i></button>
+                                    ${(m.origem === 'manual' || !m.origem) ? `<button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); deleteMovimentacao(${m.id})"><i class="fas fa-trash"></i></button>` : ''}
                                 </td>
                             </tr>
-                        `).join('') || '<tr><td colspan="10" class="text-center">Nenhum lançamento no período.</td></tr>'}
+                            `;
+                        }).join('') || '<tr><td colspan="10" class="text-center">Nenhum lançamento no período.</td></tr>'}
                     </tbody>
                 </table>
             </div>
         </div>
     `;
     $('#page-content').html(html);
+}
+
+function abrirReferenciaFinanceira(referenciaId, referenciaTipo) {
+    if (referenciaTipo === 'compra' && typeof viewCompra === 'function') {
+        viewCompra(referenciaId);
+        return;
+    }
+    if (referenciaTipo === 'venda' && typeof viewVenda === 'function') {
+        viewVenda(referenciaId);
+        return;
+    }
+    showNotification('Não há referência disponível para este lançamento.', 'info');
 }
 
 function showMovimentacaoModal(movimentacao = null) {
