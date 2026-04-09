@@ -454,6 +454,128 @@ function inicializarBanco() {
       }
     });
   });
+
+  garantirColunasCompras();
+  garantirColunasFinanceiro();
+}
+
+function garantirColunasCompras() {
+  db.all(`PRAGMA table_info(compras)`, [], (err, rows) => {
+    if (err) {
+      console.error('Erro ao verificar colunas da tabela compras:', err);
+      return;
+    }
+
+    const colunas = rows.map(r => r.name);
+    const alteracoes = [
+      !colunas.includes('condicao_pagamento') && `ALTER TABLE compras ADD COLUMN condicao_pagamento TEXT DEFAULT 'avista'`,
+      !colunas.includes('forma_pagamento') && `ALTER TABLE compras ADD COLUMN forma_pagamento TEXT`,
+      !colunas.includes('data_vencimento') && `ALTER TABLE compras ADD COLUMN data_vencimento DATE`,
+      !colunas.includes('parcelas') && `ALTER TABLE compras ADD COLUMN parcelas INTEGER DEFAULT 1`,
+      !colunas.includes('observacao') && `ALTER TABLE compras ADD COLUMN observacao TEXT`,
+      !colunas.includes('chave_acesso') && `ALTER TABLE compras ADD COLUMN chave_acesso TEXT`,
+      !colunas.includes('xml_importado_em') && `ALTER TABLE compras ADD COLUMN xml_importado_em DATETIME`
+    ].filter(Boolean);
+
+    db.serialize(() => {
+      alteracoes.forEach(sql => {
+        db.run(sql, (alterErr) => {
+          if (alterErr) {
+            console.error(`Erro ao executar alteração em compras: ${sql}`, alterErr);
+          } else {
+            console.log(`Alteração aplicada em compras: ${sql}`);
+          }
+        });
+      });
+    });
+  });
+
+  db.all(`PRAGMA table_info(compras_itens)`, [], (err, rows) => {
+    if (err) {
+      console.error('Erro ao verificar colunas da tabela compras_itens:', err);
+      return;
+    }
+
+    const colunas = rows.map(r => r.name);
+    const alteracoes = [
+      !colunas.includes('descricao_produto') && `ALTER TABLE compras_itens ADD COLUMN descricao_produto TEXT`,
+      !colunas.includes('codigo_barras') && `ALTER TABLE compras_itens ADD COLUMN codigo_barras TEXT`,
+      !colunas.includes('margem_lucro') && `ALTER TABLE compras_itens ADD COLUMN margem_lucro DECIMAL(10,2) DEFAULT 30`,
+      !colunas.includes('preco_venda_sugerido') && `ALTER TABLE compras_itens ADD COLUMN preco_venda_sugerido DECIMAL(10,2)`,
+      !colunas.includes('unidade') && `ALTER TABLE compras_itens ADD COLUMN unidade TEXT`,
+      !colunas.includes('ncm') && `ALTER TABLE compras_itens ADD COLUMN ncm TEXT`
+    ].filter(Boolean);
+
+    db.serialize(() => {
+      alteracoes.forEach(sql => {
+        db.run(sql, (alterErr) => {
+          if (alterErr) {
+            console.error(`Erro ao executar alteração em compras_itens: ${sql}`, alterErr);
+          } else {
+            console.log(`Alteração aplicada em compras_itens: ${sql}`);
+          }
+        });
+      });
+    });
+  });
+}
+
+function garantirColunasFinanceiro() {
+  db.all(`PRAGMA table_info(financeiro)`, [], (err, rows) => {
+    if (err) {
+      console.error('Erro ao verificar colunas da tabela financeiro:', err);
+      return;
+    }
+
+    const colunas = rows.map(r => r.name);
+    const alteracoes = [
+      !colunas.includes('status') && `ALTER TABLE financeiro ADD COLUMN status TEXT DEFAULT 'pago'`,
+      !colunas.includes('origem') && `ALTER TABLE financeiro ADD COLUMN origem TEXT DEFAULT 'manual'`,
+      !colunas.includes('documento') && `ALTER TABLE financeiro ADD COLUMN documento TEXT`,
+      !colunas.includes('vencimento') && `ALTER TABLE financeiro ADD COLUMN vencimento DATE`,
+      !colunas.includes('numero_parcela') && `ALTER TABLE financeiro ADD COLUMN numero_parcela INTEGER`,
+      !colunas.includes('total_parcelas') && `ALTER TABLE financeiro ADD COLUMN total_parcelas INTEGER`,
+      !colunas.includes('compra_id') && `ALTER TABLE financeiro ADD COLUMN compra_id INTEGER`,
+      !colunas.includes('venda_id') && `ALTER TABLE financeiro ADD COLUMN venda_id INTEGER`,
+      !colunas.includes('pessoa_nome') && `ALTER TABLE financeiro ADD COLUMN pessoa_nome TEXT`,
+      !colunas.includes('observacao') && `ALTER TABLE financeiro ADD COLUMN observacao TEXT`,
+      !colunas.includes('baixado_em') && `ALTER TABLE financeiro ADD COLUMN baixado_em DATE`
+    ].filter(Boolean);
+
+    db.serialize(() => {
+      alteracoes.forEach(sql => {
+        db.run(sql, (alterErr) => {
+          if (alterErr) {
+            console.error(`Erro ao executar alteração em financeiro: ${sql}`, alterErr);
+          } else {
+            console.log(`Alteração aplicada em financeiro: ${sql}`);
+          }
+        });
+      });
+
+      db.run(`
+        UPDATE financeiro
+        SET origem = COALESCE(origem, referencia_tipo, 'manual')
+        WHERE origem IS NULL OR origem = ''
+      `);
+
+      db.run(`
+        UPDATE financeiro
+        SET status = CASE
+          WHEN tipo IN ('despesa', 'pagar') THEN 'pendente'
+          WHEN tipo IN ('receita', 'receber') THEN 'recebido'
+          ELSE COALESCE(status, 'pendente')
+        END
+        WHERE status IS NULL OR status = ''
+      `);
+
+      db.run(`
+        UPDATE financeiro
+        SET vencimento = COALESCE(vencimento, data_movimento)
+        WHERE vencimento IS NULL
+      `);
+    });
+  });
 }
 
 // Função separada para inserir configurações padrão

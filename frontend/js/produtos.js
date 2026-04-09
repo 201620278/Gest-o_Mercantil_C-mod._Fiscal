@@ -186,12 +186,9 @@ function showProdutoModal(produto = null) {
                     <div class="modal-header d-flex align-items-center justify-content-between">
                         <h5 class="modal-title mb-0">${title}</h5>
                         <div>
-                            <button type="button" class="btn btn-sm btn-light me-1" title="Minimizar" onclick="minimizarModal('produtoModal')">
-                                <i class="fas fa-window-minimize"></i>
-						</button>
-						<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
-					</div>
-				</div>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Fechar"></button>
+                        </div>
+                    </div>
 
                     <div class="modal-body">
                         <form id="produtoForm">

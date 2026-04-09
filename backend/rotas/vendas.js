@@ -186,18 +186,40 @@ router.post('/', (req, res) => {
                     `, [vendaId, cliente_id, i, qtdParcelas, valorParcela, valorParcela, vencimento.format('YYYY-MM-DD')]);
                     vencimento = vencimento.add(1, 'months');
                   }
-                  db.run(`
-                    INSERT INTO financeiro (tipo, descricao, valor, data_movimento, categoria, forma_pagamento, referencia_id, referencia_tipo)
-                    VALUES ('receita', 'Venda a prazo #' || ?, ?, ?, 'vendas', ?, ?, 'venda')
-                  `, [codigo, totalNum, data_venda, forma_pagamento, vendaId], (finErr) => {
-                    if (finErr) {
-                      db.run('ROLLBACK');
-                      res.status(500).json({ error: finErr.message });
+                  const inserirFinanceiroPrazo = (indice = 1, venc = moment(primeiro_vencimento, 'YYYY-MM-DD')) => {
+                    if (indice > qtdParcelas) {
+                      db.run('COMMIT');
+                      res.json({ id: vendaId, codigo, message: 'Venda a prazo registrada com sucesso' });
                       return;
                     }
-                    db.run('COMMIT');
-                    res.json({ id: vendaId, codigo, message: 'Venda a prazo registrada com sucesso' });
-                  });
+                    db.run(`
+                      INSERT INTO financeiro (
+                        tipo, descricao, valor, data_movimento, categoria, forma_pagamento,
+                        referencia_id, referencia_tipo, status, origem, documento, vencimento,
+                        numero_parcela, total_parcelas, venda_id, pessoa_nome, baixado_em
+                      ) VALUES ('receita', ?, ?, ?, 'vendas', ?, ?, 'venda', 'pendente', 'venda', ?, ?, ?, ?, ?, ?, NULL)
+                    `, [
+                      `Venda ${codigo} - Parcela ${indice}/${qtdParcelas}`,
+                      valorParcela,
+                      data_venda,
+                      forma_pagamento,
+                      vendaId,
+                      codigo,
+                      venc.format('YYYY-MM-DD'),
+                      indice,
+                      qtdParcelas,
+                      vendaId,
+                      cliente_id || null
+                    ], (finErr) => {
+                      if (finErr) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: finErr.message });
+                        return;
+                      }
+                      inserirFinanceiroPrazo(indice + 1, moment(venc).add(1, 'months'));
+                    });
+                  };
+                  inserirFinanceiroPrazo();
                 }
               });
             });
@@ -247,10 +269,27 @@ router.post('/', (req, res) => {
               }
               itensProcessados++;
               if (itensProcessados === itens.length) {
+                const statusFinanceiro = forma_pagamento === 'credito' ? 'pendente' : 'recebido';
+                const baixadoEm = statusFinanceiro === 'recebido' ? data_venda : null;
                 db.run(`
-                  INSERT INTO financeiro (tipo, descricao, valor, data_movimento, categoria, forma_pagamento, referencia_id, referencia_tipo)
-                  VALUES ('receita', 'Venda #' || ?, ?, ?, 'vendas', ?, ?, 'venda')
-                `, [codigo, totalNum, data_venda, forma_pagamento, vendaId], (finErr) => {
+                  INSERT INTO financeiro (
+                    tipo, descricao, valor, data_movimento, categoria, forma_pagamento,
+                    referencia_id, referencia_tipo, status, origem, documento, vencimento,
+                    numero_parcela, total_parcelas, venda_id, pessoa_nome, baixado_em
+                  ) VALUES ('receita', ?, ?, ?, 'vendas', ?, ?, 'venda', ?, 'venda', ?, ?, 1, 1, ?, ?, ?)
+                `, [
+                  `Venda ${codigo}`,
+                  totalNum,
+                  data_venda,
+                  forma_pagamento,
+                  vendaId,
+                  statusFinanceiro,
+                  codigo,
+                  data_venda,
+                  vendaId,
+                  cliente_id || null,
+                  baixadoEm
+                ], (finErr) => {
                   if (finErr) {
                     db.run('ROLLBACK');
                     res.status(500).json({ error: finErr.message });
@@ -344,13 +383,20 @@ router.put('/:id/cancelar', (req, res) => {
             }
 
             db.run(`
-              INSERT INTO financeiro (tipo, descricao, valor, data_movimento, categoria, forma_pagamento, referencia_id, referencia_tipo)
-              VALUES ('despesa', ?, ?, ?, 'estorno_venda', 'estorno', ?, 'estorno_venda')
+              INSERT INTO financeiro (
+                tipo, descricao, valor, data_movimento, categoria, forma_pagamento,
+                referencia_id, referencia_tipo, status, origem, documento, vencimento,
+                venda_id, baixado_em
+              ) VALUES ('despesa', ?, ?, ?, 'estorno_venda', 'estorno', ?, 'estorno_venda', 'pago', 'cancelamento_venda', ?, ?, ?, ?)
             `, [
               `Estorno cancelamento ${venda.codigo}`,
               venda.total,
               venda.data_venda,
-              id
+              id,
+              venda.codigo,
+              venda.data_venda,
+              id,
+              venda.data_venda
             ], (finErr) => {
               if (finErr) {
                 db.run('ROLLBACK');
