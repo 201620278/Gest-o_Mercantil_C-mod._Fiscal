@@ -655,12 +655,19 @@ function finalizarVenda() {
                             url: `${API_URL}/fiscal/nfce/emitir/${vendaId}`,
                             method: 'POST',
                             success: function(nota) {
-                                showNotification('NFC-e emitida com sucesso!', 'success');
-                                console.log('NFC-e emitida:', nota);
+                                const motivo = nota?.message || nota?.motivo_retorno || 'Retorno SEFAZ desconhecido.';
 
                                 if (nota && nota.status === 'autorizado') {
+                                    showNotification(motivo, 'success');
                                     imprimirDanfeNfce(vendaId, dados, total, desconto, nota);
+                                } else if (nota && nota.status === 'processando') {
+                                    showNotification(motivo, 'info');
+                                    imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
+                                } else if (nota && nota.status === 'rejeitado') {
+                                    showNotification(motivo, 'warning');
+                                    imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
                                 } else {
+                                    showNotification(motivo, 'warning');
                                     imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
                                 }
 
@@ -732,7 +739,7 @@ function finalizarVenda() {
 }
 
 function mostrarConfirmacaoFiscal(vendaId, callback) {
-    const emitir = confirm('Deseja emitir cupom fiscal (NFC-e) para esta venda?');
+    const emitir = confirm('Deseja emitir NFC-e para esta venda?\n\nOK = emitir cupom fiscal\nCancelar = gerar apenas cupom não fiscal');
     callback(emitir);
 }
 

@@ -216,6 +216,14 @@ function recalcularLinhaCompra(index, origem = 'custo') {
     item.subtotal = Number((item.quantidade * item.preco_unitario).toFixed(2));
 }
 
+
+function removerItemCompra(index) {
+    if (index < 0 || index >= itensCompraAtual.length) return;
+    itensCompraAtual.splice(index, 1);
+    renderItensCompraTabela();
+    calcularParcelasCompra();
+}
+
 function renderItensCompraTabela() {
     const tbody = $('#itensCompraBody');
     const total = itensCompraAtual.reduce((sum, item) => sum + Number(item.subtotal || 0), 0);

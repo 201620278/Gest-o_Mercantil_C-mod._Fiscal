@@ -1,9 +1,10 @@
-﻿const fs = require('fs');
+const fs = require('fs');
 const path = require('path');
 const db = require('../database');
 const sefazService = require('./sefazService');
 const { SignedXml } = require('xml-crypto');
 const certificadoService = require('./certificadoService');
+const fiscalConfigService = require('./fiscalConfigService');
 
 const storageDir = path.join(__dirname, '..', 'storage');
 const xmlDir = path.join(storageDir, 'xml');
@@ -36,7 +37,23 @@ function formatarValor(value) {
   return Number(value || 0).toFixed(2);
 }
 
+function calcularDigitoVerificador(chaveSemDV) {
+  const digitos = String(chaveSemDV).split('').reverse().map(Number);
+  let soma = 0;
+  let peso = 2;
+
+  for (const digito of digitos) {
+    soma += digito * peso;
+    peso = peso === 9 ? 2 : peso + 1;
+  }
+
+  const resto = soma % 11;
+  const dv = 11 - resto;
+  return dv === 0 || dv === 1 ? 0 : dv;
+}
+
 function gerarChaveAcesso(empresa, venda, numero, serie) {
+  const cUF = obterCodigoUF(empresa.uf);
   const cnpj = somenteNumeros(empresa.cnpj).padStart(14, '0');
   const data = new Date();
   const anoMes = `${String(data.getFullYear()).slice(2)}${pad(data.getMonth() + 1, 2)}`;
@@ -44,10 +61,10 @@ function gerarChaveAcesso(empresa, venda, numero, serie) {
   const serieStr = pad(serie, 3);
   const numeroStr = pad(numero, 9);
   const tipoEmissao = '1';
-  const codigoNum = '12345678';
+  const codigoNum = String(Math.floor(Math.random() * 90000000) + 10000000).padStart(8, '0');
 
-  // Mantido simples como no seu projeto atual
-  return `${anoMes}${cnpj}${mod}${serieStr}${numeroStr}${tipoEmissao}${codigoNum}0`;
+  const chaveSemDV = `${cUF}${anoMes}${cnpj}${mod}${serieStr}${numeroStr}${tipoEmissao}${codigoNum}`;
+  return `${chaveSemDV}${calcularDigitoVerificador(chaveSemDV)}`;
 }
 
 function obterCodigoUF(uf) {
@@ -62,7 +79,7 @@ function obterCodigoUF(uf) {
   return mapa[String(uf || '').toUpperCase()] || '23';
 }
 
-function montarXml(venda, notaFiscal, empresa, itens, cliente) {
+function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '000000000000001', indSinc = 1) {
   const itensXml = itens.map((item, index) => {
     const nItem = index + 1;
     const subtotal = Number(item.subtotal || 0);
@@ -132,12 +149,13 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente) {
   const cscId = empresa.CSC_ID || empresa.csc_id || '';
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<enviNFe>
+<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00" idLote="${idLote}" indSinc="${indSinc}">
   <infNFe Id="NFe${notaFiscal.chave_acesso}" versao="4.00">
     <ide>
       <cUF>${cUF}</cUF>
       <cNF>${pad(notaFiscal.numero, 8)}</cNF>
       <natOp>VENDA</natOp>
+      <tpNF>1</tpNF>
       <mod>65</mod>
       <serie>${notaFiscal.serie}</serie>
       <nNF>${notaFiscal.numero}</nNF>
@@ -278,20 +296,6 @@ function inserirEventoNota(notaFiscalId, tipoEvento, protocolo, justificativa, r
   });
 }
 
-function buscarConfiguracaoFiscalAtiva() {
-  return new Promise((resolve, reject) => {
-    db.get(`
-      SELECT *
-      FROM configuracao_fiscal
-      ORDER BY id DESC
-      LIMIT 1
-    `, [], (err, row) => {
-      if (err) return reject(err);
-      resolve(row || null);
-    });
-  });
-}
-
 function buscarVendaCompleta(vendaId) {
   return new Promise((resolve, reject) => {
     db.get(`
@@ -327,7 +331,7 @@ function buscarVendaCompleta(vendaId) {
         if (errItens) return reject(errItens);
 
         try {
-          const empresa = await buscarConfiguracaoFiscalAtiva();
+          const empresa = await fiscalConfigService.obterPerfilAtivo();
 
           resolve({
             venda,
@@ -481,7 +485,8 @@ async function emitirNfce(vendaId) {
     valor_total: valorTotal
   };
 
-  const xml = montarXml(venda, notaFiscal, empresa, itens, cliente);
+  const loteId = String(Date.now()).padStart(15, '0').slice(-15);
+  const xml = montarXml(venda, notaFiscal, empresa, itens, cliente, loteId, 1);
   const xmlPath = salvarXml(xml, `nfce_venda_${vendaId}_n${numero}`);
 
   const xmlAssinado = assinarXml(xml, empresa);
@@ -508,9 +513,9 @@ async function emitirNfce(vendaId) {
 
       const notaFiscalId = this.lastID;
 
-      sefazService.transmitirNfce(xmlAssinado, notaFiscal.ambiente)
+      sefazService.transmitirNfce(xmlAssinado, notaFiscal.ambiente, empresa.certificado_path, empresa.certificado_senha)
         .then((retorno) => {
-          const statusFinal = retorno.codigo === '100' ? 'autorizado' : 'rejeitado';
+          const statusFinal = retorno.codigo === '100' ? 'autorizado' : ['103', '105'].includes(retorno.codigo) ? 'processando' : 'rejeitado';
           const nfceEmitida = statusFinal === 'autorizado' ? 1 : 0;
           const dataAutorizacao = retorno.dataAutorizacao || new Date().toISOString();
           const retornoXmlPath = salvarXml(
@@ -571,6 +576,13 @@ async function emitirNfce(vendaId) {
               `, [numero + 1, empresa.id], (errUpdateEmpresa) => {
                 if (errUpdateEmpresa) return reject(errUpdateEmpresa);
 
+                const motivoRetorno = retorno.mensagem || retorno.codigo || 'Retorno desconhecido';
+                const message = statusFinal === 'autorizado'
+                  ? 'NFC-e autorizada pela SEFAZ.'
+                  : statusFinal === 'processando'
+                    ? `NFC-e em processamento pela SEFAZ: ${motivoRetorno}`
+                    : `NFC-e rejeitada pela SEFAZ: ${motivoRetorno}`;
+
                 resolve({
                   nota_fiscal_id: notaFiscalId,
                   venda_id: vendaId,
@@ -586,9 +598,7 @@ async function emitirNfce(vendaId) {
                   motivo_retorno: retorno.mensagem || null,
                   qr_code_url: retorno.qrCodeUrl || null,
                   qr_code_base64: retorno.qrCodeBase64 || null,
-                  message: statusFinal === 'autorizado'
-                    ? 'NFC-e autorizada pela SEFAZ.'
-                    : 'NFC-e rejeitada pela SEFAZ.'
+                  message
                 });
               });
             });

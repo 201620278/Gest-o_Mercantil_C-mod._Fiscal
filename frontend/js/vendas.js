@@ -430,6 +430,9 @@ function viewVenda(id) {
                                 <p><strong>Desconto:</strong> ${formatCurrency(venda.desconto || 0)}</p>
                                 <p><strong>Total:</strong> ${formatCurrency(venda.total)}</p>
                                 <p><strong>Status:</strong> ${venda.status}</p>
+                                <p><strong>Status Fiscal:</strong> ${venda.status_fiscal || 'não emitido'}</p>
+                                ${venda.chave_nfce ? `<p><strong>Chave NFC-e:</strong> ${venda.chave_nfce}</p>` : ''}
+                                ${venda.motivo_retorno ? `<p><strong>Motivo SEFAZ:</strong> ${venda.motivo_retorno}</p>` : ''}
                                 
                                 <hr>
                                 <h6>Itens da Venda</h6>

@@ -74,6 +74,7 @@ function criarCategoria() {
     $('#categoria-nome').val('');
     $('#categoria-descricao').val('');
     loadCategorias();
+    $('#modal-categoria').modal('hide');
     // Atualizar select de categorias para subcategoria imediatamente
     if (typeof atualizarSelectCategoriasSubcategoria === 'function') {
       atualizarSelectCategoriasSubcategoria();
@@ -103,7 +104,10 @@ function salvarCategoria() {
     return;
   }
   categoriasAPI.atualizar(id, { nome, descricao }).done(() => {
-    $('#categoria-modal').modal('hide');
+    $('#modal-categoria').modal('hide');
+    $('#categoria-id').val('');
+    $('#categoria-nome').val('');
+    $('#categoria-descricao').val('');
     loadCategorias();
   }).fail(err => {
     alert('Erro ao atualizar categoria: ' + (err.responseJSON?.erro || err.statusText));

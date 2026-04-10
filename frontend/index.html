@@ -162,10 +162,6 @@
                 method: 'POST',
                 success: function(data) {
                     console.log('Token válido:', data);
-                    // Carregar página inicial
-                    if (typeof loadPage === 'function') {
-                        loadPage('pdv');
-                    }
                 },
                 error: function(xhr) {
                     console.log('Token inválido:', xhr);

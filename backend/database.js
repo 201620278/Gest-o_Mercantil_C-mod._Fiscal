@@ -457,7 +457,41 @@ function inicializarBanco() {
 
   garantirColunasCompras();
   garantirColunasFinanceiro();
+  garantirColunasConfigFiscal();
 }
+
+function garantirColunasConfigFiscal() {
+  db.all(`PRAGMA table_info(configuracao_fiscal)`, [], (err, rows) => {
+    if (err) {
+      console.error('Erro ao verificar colunas da tabela configuracao_fiscal:', err);
+      return;
+    }
+
+    const colunas = rows.map(r => r.name);
+    const alteracoes = [
+      !colunas.includes('ativo') && `ALTER TABLE configuracao_fiscal ADD COLUMN ativo INTEGER DEFAULT 0`,
+      !colunas.includes('certificado_validade_inicio') && `ALTER TABLE configuracao_fiscal ADD COLUMN certificado_validade_inicio TEXT`,
+      !colunas.includes('certificado_validade_fim') && `ALTER TABLE configuracao_fiscal ADD COLUMN certificado_validade_fim TEXT`,
+      !colunas.includes('certificado_serial') && `ALTER TABLE configuracao_fiscal ADD COLUMN certificado_serial TEXT`
+    ].filter(Boolean);
+
+    db.serialize(() => {
+      alteracoes.forEach(sql => {
+        db.run(sql, (alterErr) => {
+          if (alterErr) console.error(`Erro ao executar alteração em configuracao_fiscal: ${sql}`, alterErr);
+          else console.log(`Alteração aplicada em configuracao_fiscal: ${sql}`);
+        });
+      });
+
+      db.get(`SELECT valor FROM configuracoes WHERE chave = 'ambiente_fiscal_ativo'`, [], (cfgErr, cfg) => {
+        if (cfgErr) return;
+        const ambienteAtivo = (cfg && cfg.valor) || 'homologacao';
+        db.run(`UPDATE configuracao_fiscal SET ativo = CASE WHEN ambiente = ? THEN 1 ELSE 0 END`, [ambienteAtivo]);
+      });
+    });
+  });
+}
+
 
 function garantirColunasCompras() {
   db.all(`PRAGMA table_info(compras)`, [], (err, rows) => {
@@ -589,7 +623,8 @@ function inserirConfiguracoesPadrao() {
     ['endereco', '', 'text', 'Endereço da empresa'],
     ['logo', '', 'text', 'URL da logo'],
     ['imprimir_cupom', 'true', 'boolean', 'Imprimir cupom fiscal'],
-    ['juros_mora', '1.0', 'decimal', 'Juros de mora por dia (%)']
+    ['juros_mora', '1.0', 'decimal', 'Juros de mora por dia (%)'],
+    ['ambiente_fiscal_ativo', 'homologacao', 'string', 'Ambiente fiscal ativo para emissão NFC-e']
   ];
 
   configs.forEach(config => {
