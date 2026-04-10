@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00" idLote="001775796333613" indSinc="1">
+  <infNFe Id="NFe23260465957340000150650010000000211274143475" versao="4.00">
+    <ide>
+      <cUF>23</cUF>
+      <cNF>00000021</cNF>
+      <natOp>VENDA</natOp>
+      <tpNF>1</tpNF>
+      <mod>65</mod>
+      <serie>1</serie>
+      <nNF>21</nNF>
+      <dhEmi>2026-04-10T04:45:33.614Z</dhEmi>
+      <tpImp>4</tpImp>
+      <tpEmis>1</tpEmis>
+      <cDV>5</cDV>
+      <tpAmb>2</tpAmb>
+      <finNFe>1</finNFe>
+      <indFinal>1</indFinal>
+      <indPres>1</indPres>
+      <procEmi>0</procEmi>
+      <verProc>1.0.0</verProc>
+    </ide>
+    <emit>
+      <CNPJ>65957340000150</CNPJ>
+      <xNome>ESQUINAO DA ECONOMIA LTDA</xNome>
+      <xFant>ESQUINAO DA ECONOMIA</xFant>
+      <IE>073252638</IE>
+      <CRT>1</CRT>
+      <enderEmit>
+        <xLgr>R VEREADOR JOSE RODRIGUES SOARES</xLgr>
+        <nro>268</nro>
+        <xCpl></xCpl>
+        <xBairro>PIRAJA</xBairro>
+        <cMun>2307304</cMun>
+        <xMun>JUAZEIRO DO NORTE</xMun>
+        <UF>CE</UF>
+        <CEP>63034050</CEP>
+      </enderEmit>
+      <CNAE>47.12-1-00</CNAE>
+    </emit>
+    
+    
+      <det nItem="1">
+        <prod>
+          <cProd>14</cProd>
+          <cEAN>7896038321056</cEAN>
+          <xProd>Arroz tio Urbano Branco</xProd>
+          <NCM>160063021</NCM>
+          <CFOP>5102</CFOP>
+          <uCom>kg</uCom>
+          <qCom>1.00</qCom>
+          <vUnCom>3.19</vUnCom>
+          <vProd>3.19</vProd>
+          <indTot>1</indTot>
+        </prod>
+        <imposto>
+          <ICMS>
+            <ICMS00>
+              <orig>0</orig>
+              <CST>6102</CST>
+              <modBC>0</modBC>
+              <vBC>3.19</vBC>
+              <pICMS>0.00</pICMS>
+              <vICMS>0.00</vICMS>
+            </ICMS00>
+          </ICMS>
+          <PIS>
+            <PISAliq>
+              <CST>01</CST>
+              <vBC>3.19</vBC>
+              <pPIS>0.00</pPIS>
+              <vPIS>0.00</vPIS>
+            </PISAliq>
+          </PIS>
+          <COFINS>
+            <COFINSAliq>
+              <CST>01</CST>
+              <vBC>3.19</vBC>
+              <pCOFINS>0.00</pCOFINS>
+              <vCOFINS>0.00</vCOFINS>
+            </COFINSAliq>
+          </COFINS>
+        </imposto>
+      </det>
+    <total>
+      <ICMSTot>
+        <vProd>3.19</vProd>
+        <vNF>3.19</vNF>
+      </ICMSTot>
+    </total>
+    <infAdic>
+      <infCpl>CSC ID: 000001 | CSC: 1234567890123456789012345678901234567890</infCpl>
+    </infAdic>
+  </infNFe>
+</enviNFe>

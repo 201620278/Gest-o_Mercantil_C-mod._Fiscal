@@ -6,17 +6,50 @@ const moment = require('moment');
 // Listar todas as vendas
 router.get('/', (req, res) => {
   db.all(`
-    SELECT v.*, c.nome as cliente_nome,
-      (SELECT COUNT(*) FROM vendas_itens WHERE venda_id = v.id) as total_itens
+    SELECT
+      v.id,
+      v.codigo,
+      v.data_venda,
+      v.created_at,
+      v.cliente_id,
+      v.total,
+      v.desconto,
+      v.forma_pagamento,
+      v.status,
+      v.nfce_emitida,
+      v.status_fiscal,
+      v.chave_nfce,
+      c.nome AS cliente_nome,
+      (
+        SELECT COUNT(*)
+        FROM vendas_itens vi
+        WHERE vi.venda_id = v.id
+      ) AS total_itens,
+      (
+        SELECT nf.numero
+        FROM notas_fiscais nf
+        WHERE nf.venda_id = v.id
+        ORDER BY nf.id DESC
+        LIMIT 1
+      ) AS numero_nfce,
+      (
+        SELECT nf.status
+        FROM notas_fiscais nf
+        WHERE nf.venda_id = v.id
+        ORDER BY nf.id DESC
+        LIMIT 1
+      ) AS nfce_status
     FROM vendas v
-    LEFT JOIN clientes c ON v.cliente_id = c.id
-    ORDER BY v.data_venda DESC
-  `, (err, rows) => {
+    LEFT JOIN clientes c ON c.id = v.cliente_id
+    ORDER BY datetime(v.created_at) DESC, v.id DESC
+  `, [], (err, rows) => {
     if (err) {
-      res.status(500).json({ error: err.message });
-      return;
+      console.error('Erro ao listar vendas:', err);
+      return res.status(500).json({ error: err.message });
     }
-    res.json(rows);
+
+    res.setHeader('Cache-Control', 'no-store');
+    res.json(rows || []);
   });
 });
 
