@@ -677,10 +677,24 @@ function finalizarVenda() {
                                 error: function(xhr) {
                                     console.error('Erro ao emitir NFC-e:', xhr);
 
-                                    let mensagem = 'Venda salva, mas houve erro na emissão fiscal.';
-                                    if (xhr.responseJSON && xhr.responseJSON.error) {
-                                        mensagem = `Venda salva, mas houve erro na emissão fiscal: ${xhr.responseJSON.error}`;
+                                    let detalheErro = '';
+
+                                    if (xhr.responseJSON?.error) {
+                                        detalheErro = xhr.responseJSON.error;
+                                    } else if (xhr.responseText) {
+                                        try {
+                                            const parsed = JSON.parse(xhr.responseText);
+                                            detalheErro = parsed.error || parsed.message || xhr.responseText;
+                                        } catch (_) {
+                                            detalheErro = xhr.responseText;
+                                        }
+                                    } else if (xhr.statusText) {
+                                        detalheErro = xhr.statusText;
                                     }
+
+                                    const mensagem = detalheErro
+                                        ? `Venda salva, mas houve erro na emissão fiscal: ${detalheErro}`
+                                        : 'Venda salva, mas houve erro na emissão fiscal.';
 
                                     showNotification(mensagem, 'warning');
                                     imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
@@ -691,10 +705,24 @@ function finalizarVenda() {
                         error: function(xhr) {
                             console.error('Erro ao validar NFC-e:', xhr);
 
-                            let mensagem = 'Venda salva, mas houve erro ao validar os dados fiscais.';
-                            if (xhr.responseJSON && xhr.responseJSON.error) {
-                                mensagem = `Venda salva, mas houve erro na validação fiscal: ${xhr.responseJSON.error}`;
+                            let detalheErro = '';
+
+                            if (xhr.responseJSON?.error) {
+                                detalheErro = xhr.responseJSON.error;
+                            } else if (xhr.responseText) {
+                                try {
+                                    const parsed = JSON.parse(xhr.responseText);
+                                    detalheErro = parsed.error || parsed.message || xhr.responseText;
+                                } catch (_) {
+                                    detalheErro = xhr.responseText;
+                                }
+                            } else if (xhr.statusText) {
+                                detalheErro = xhr.statusText;
                             }
+
+                            const mensagem = detalheErro
+                                ? `Venda salva, mas houve erro na validação fiscal: ${detalheErro}`
+                                : 'Venda salva, mas houve erro ao validar os dados fiscais.';
 
                             showNotification(mensagem, 'warning');
                             imprimirCupomNaoFiscal(vendaId, dados, total, desconto);

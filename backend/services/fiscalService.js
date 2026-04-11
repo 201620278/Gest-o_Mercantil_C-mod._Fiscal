@@ -21,14 +21,18 @@ function pad(value, length) {
 }
 
 function escapeXml(value) {
-  return String(value || '')
+  if (value === null || value === undefined) return '';
+
+  return String(value)
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7E]/g, '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
+    .replace(/'/g, '&apos;')
+    .trim();
 }
-
 function somenteNumeros(value) {
   return String(value || '').replace(/\D/g, '');
 }
@@ -37,34 +41,96 @@ function formatarValor(value) {
   return Number(value || 0).toFixed(2);
 }
 
-function calcularDigitoVerificador(chaveSemDV) {
-  const digitos = String(chaveSemDV).split('').reverse().map(Number);
+function formatarDataHoraBrasil() {
+  const agora = new Date();
+  const offset = -3; // Brasil/CE
+  const local = new Date(agora.getTime() + (offset * 60 * 60 * 1000) + (agora.getTimezoneOffset() * 60000));
+  return local.toISOString().slice(0, 19) + '-03:00';
+}
+
+function normalizarFormaPagamento(forma) {
+  return String(forma || '').trim().toLowerCase();
+}
+
+function obterCodigoPagamentoNfce(formaPagamento) {
+  const forma = normalizarFormaPagamento(formaPagamento);
+
+  const mapa = {
+    dinheiro: '01',
+    cheque: '02',
+    cartao_credito: '03',
+    cartao_debito: '04',
+    credito_loja: '05',
+    vale_alimentacao: '10',
+    vale_refeicao: '11',
+    vale_presente: '12',
+    vale_combustivel: '13',
+    duplicata_mercantil: '14',
+    pix: '17',
+    boleto: '15',
+    sem_pagamento: '90',
+
+    // mapeamentos do seu sistema
+    credito: '05',
+    prazo: '15'
+  };
+
+  return mapa[forma] || '99';
+}
+
+function montarPagXml(venda, valorTotal) {
+  const formaPagamento = normalizarFormaPagamento(venda.forma_pagamento);
+  const tPag = obterCodigoPagamentoNfce(formaPagamento);
+
+  return `
+      <pag>
+        <detPag>
+          <tPag>${tPag}</tPag>
+          <vPag>${formatarValor(valorTotal)}</vPag>
+        </detPag>
+      </pag>`;
+}
+
+function calcularDV(chave) {
   let soma = 0;
   let peso = 2;
 
-  for (const digito of digitos) {
-    soma += digito * peso;
+  for (let i = chave.length - 1; i >= 0; i--) {
+    soma += Number(chave[i]) * peso;
     peso = peso === 9 ? 2 : peso + 1;
   }
 
   const resto = soma % 11;
-  const dv = 11 - resto;
-  return dv === 0 || dv === 1 ? 0 : dv;
+  return resto < 2 ? 0 : 11 - resto;
 }
 
-function gerarChaveAcesso(empresa, venda, numero, serie) {
-  const cUF = obterCodigoUF(empresa.uf);
-  const cnpj = somenteNumeros(empresa.cnpj).padStart(14, '0');
+function gerarChaveAcesso(empresa, numero, serie) {
+  const cUF = obterCodigoUF(empresa.uf); // ex: 23
   const data = new Date();
-  const anoMes = `${String(data.getFullYear()).slice(2)}${pad(data.getMonth() + 1, 2)}`;
-  const mod = '65';
-  const serieStr = pad(serie, 3);
-  const numeroStr = pad(numero, 9);
-  const tipoEmissao = '1';
-  const codigoNum = String(Math.floor(Math.random() * 90000000) + 10000000).padStart(8, '0');
+  
+  const ano = String(data.getFullYear()).slice(-2);
+  const mes = String(data.getMonth() + 1).padStart(2, '0');
 
-  const chaveSemDV = `${cUF}${anoMes}${cnpj}${mod}${serieStr}${numeroStr}${tipoEmissao}${codigoNum}`;
-  return `${chaveSemDV}${calcularDigitoVerificador(chaveSemDV)}`;
+  const CNPJ = somenteNumeros(empresa.cnpj).padStart(14, '0');
+  const modelo = '65';
+  const serieStr = String(serie).padStart(3, '0');
+  const numeroStr = String(numero).padStart(9, '0');
+  const tpEmis = '1';
+  const cNF = Math.floor(Math.random() * 99999999).toString().padStart(8, '0');
+
+  let chaveSemDV =
+    cUF +
+    ano + mes +
+    CNPJ +
+    modelo +
+    serieStr +
+    numeroStr +
+    tpEmis +
+    cNF;
+
+  const dv = calcularDV(chaveSemDV);
+
+  return chaveSemDV + dv;
 }
 
 function obterCodigoUF(uf) {
@@ -80,126 +146,187 @@ function obterCodigoUF(uf) {
 }
 
 function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '000000000000001', indSinc = 1) {
+  const crt = String(empresa.crt || '1').trim();
+  const valorTotal = Number(notaFiscal.valor_total || 0);
+
   const itensXml = itens.map((item, index) => {
     const nItem = index + 1;
     const subtotal = Number(item.subtotal || 0);
-    const aliquotaIcms = Number(item.aliquota_icms || 0);
-    const aliquotaPis = Number(item.aliquota_pis || 0);
-    const aliquotaCofins = Number(item.aliquota_cofins || 0);
+    const cfop = String(item.cfop || '5102').trim();
+    const unidade = String(item.unidade || 'UN').trim();
+    const csosn = String(item.csosn || '102').trim();
+
+    let icmsXml = '';
+
+    if (crt === '1') {
+      icmsXml = `
+          <ICMS>
+            <ICMSSN102>
+              <orig>${Number(item.origem || 0)}</orig>
+              <CSOSN>${escapeXml(csosn)}</CSOSN>
+            </ICMSSN102>
+          </ICMS>`;
+    } else {
+      const aliquotaIcms = Number(item.aliquota_icms || 0);
+
+      icmsXml = `
+          <ICMS>
+            <ICMS00>
+              <orig>${Number(item.origem || 0)}</orig>
+              <CST>00</CST>
+              <modBC>3</modBC>
+              <vBC>${formatarValor(subtotal)}</vBC>
+              <pICMS>${formatarValor(aliquotaIcms)}</pICMS>
+              <vICMS>${formatarValor((subtotal * aliquotaIcms) / 100)}</vICMS>
+            </ICMS00>
+          </ICMS>`;
+    }
 
     return `
       <det nItem="${nItem}">
         <prod>
           <cProd>${escapeXml(item.produto_id)}</cProd>
-          <cEAN>${escapeXml(item.codigo_barras || '')}</cEAN>
-          <xProd>${escapeXml(item.nome || '')}</xProd>
+          <cEAN>${escapeXml(item.codigo_barras || 'SEM GTIN')}</cEAN>
+          <xProd>${escapeXml(item.nome || '').substring(0, 120)}</xProd>
           <NCM>${escapeXml(item.ncm || '')}</NCM>
-          <CFOP>${escapeXml(item.cfop || '')}</CFOP>
-          <uCom>${escapeXml(item.unidade || 'UN')}</uCom>
+          <CFOP>${escapeXml(cfop)}</CFOP>
+          <uCom>${escapeXml(unidade)}</uCom>
           <qCom>${formatarValor(item.quantidade)}</qCom>
           <vUnCom>${formatarValor(item.preco_unitario)}</vUnCom>
           <vProd>${formatarValor(subtotal)}</vProd>
+          <cEANTrib>${escapeXml(item.codigo_barras || 'SEM GTIN')}</cEANTrib>
+          <uTrib>${escapeXml(unidade)}</uTrib>
+          <qTrib>${formatarValor(item.quantidade)}</qTrib>
+          <vUnTrib>${formatarValor(item.preco_unitario)}</vUnTrib>
           <indTot>1</indTot>
         </prod>
         <imposto>
-          <ICMS>
-            <ICMS00>
-              <orig>${Number(item.origem || 0)}</orig>
-              <CST>${escapeXml(item.csosn || '')}</CST>
-              <modBC>0</modBC>
-              <vBC>${formatarValor(subtotal)}</vBC>
-              <pICMS>${formatarValor(aliquotaIcms)}</pICMS>
-              <vICMS>${formatarValor((subtotal * aliquotaIcms) / 100)}</vICMS>
-            </ICMS00>
-          </ICMS>
+          ${icmsXml}
           <PIS>
-            <PISAliq>
-              <CST>01</CST>
+            <PISOutr>
+              <CST>49</CST>
               <vBC>${formatarValor(subtotal)}</vBC>
-              <pPIS>${formatarValor(aliquotaPis)}</pPIS>
-              <vPIS>${formatarValor((subtotal * aliquotaPis) / 100)}</vPIS>
-            </PISAliq>
+              <pPIS>0.00</pPIS>
+              <vPIS>0.00</vPIS>
+            </PISOutr>
           </PIS>
           <COFINS>
-            <COFINSAliq>
-              <CST>01</CST>
+            <COFINSOutr>
+              <CST>49</CST>
               <vBC>${formatarValor(subtotal)}</vBC>
-              <pCOFINS>${formatarValor(aliquotaCofins)}</pCOFINS>
-              <vCOFINS>${formatarValor((subtotal * aliquotaCofins) / 100)}</vCOFINS>
-            </COFINSAliq>
+              <pCOFINS>0.00</pCOFINS>
+              <vCOFINS>0.00</vCOFINS>
+            </COFINSOutr>
           </COFINS>
         </imposto>
       </det>`;
   }).join('');
 
   let clienteXml = '';
-  if (cliente) {
+  if (cliente && cliente.cpf_cnpj) {
     const doc = somenteNumeros(cliente.cpf_cnpj);
 
     clienteXml = `
-    <dest>
-      ${doc.length === 14 ? `<CNPJ>${escapeXml(doc)}</CNPJ>` : ''}
-      ${doc.length === 11 ? `<CPF>${escapeXml(doc)}</CPF>` : ''}
-      <xNome>${escapeXml(cliente.nome || '')}</xNome>
-    </dest>`;
+      <dest>
+        ${doc.length === 14 ? `<CNPJ>${escapeXml(doc)}</CNPJ>` : ''}
+        ${doc.length === 11 ? `<CPF>${escapeXml(doc)}</CPF>` : ''}
+        ${cliente.nome ? `<xNome>${escapeXml(cliente.nome)}</xNome>` : ''}
+        <indIEDest>9</indIEDest>
+      </dest>`;
   }
 
   const cUF = obterCodigoUF(empresa.uf);
-  const csc = empresa.CSC || empresa.csc || '';
-  const cscId = empresa.CSC_ID || empresa.csc_id || '';
+  const dhEmi = formatarDataHoraBrasil();
+  const pagXml = montarPagXml(venda, valorTotal);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00" idLote="${idLote}" indSinc="${indSinc}">
-  <infNFe Id="NFe${notaFiscal.chave_acesso}" versao="4.00">
-    <ide>
-      <cUF>${cUF}</cUF>
-      <cNF>${pad(notaFiscal.numero, 8)}</cNF>
-      <natOp>VENDA</natOp>
-      <tpNF>1</tpNF>
-      <mod>65</mod>
-      <serie>${notaFiscal.serie}</serie>
-      <nNF>${notaFiscal.numero}</nNF>
-      <dhEmi>${new Date().toISOString()}</dhEmi>
-      <tpImp>4</tpImp>
-      <tpEmis>1</tpEmis>
-      <cDV>${notaFiscal.chave_acesso.slice(-1)}</cDV>
-      <tpAmb>${notaFiscal.ambiente === 'producao' ? 1 : 2}</tpAmb>
-      <finNFe>1</finNFe>
-      <indFinal>1</indFinal>
-      <indPres>1</indPres>
-      <procEmi>0</procEmi>
-      <verProc>1.0.0</verProc>
-    </ide>
-    <emit>
-      <CNPJ>${escapeXml(somenteNumeros(empresa.cnpj || ''))}</CNPJ>
-      <xNome>${escapeXml(empresa.razao_social || '')}</xNome>
-      <xFant>${escapeXml(empresa.nome_fantasia || '')}</xFant>
-      <IE>${escapeXml(empresa.ie || '')}</IE>
-      <CRT>${escapeXml(empresa.crt || 1)}</CRT>
-      <enderEmit>
-        <xLgr>${escapeXml(empresa.logradouro || '')}</xLgr>
-        <nro>${escapeXml(empresa.numero || '')}</nro>
-        <xCpl>${escapeXml(empresa.complemento || '')}</xCpl>
-        <xBairro>${escapeXml(empresa.bairro || '')}</xBairro>
-        <cMun>${escapeXml(empresa.codigo_municipio || '')}</cMun>
-        <xMun>${escapeXml(empresa.municipio || '')}</xMun>
-        <UF>${escapeXml(empresa.uf || '')}</UF>
-        <CEP>${escapeXml(somenteNumeros(empresa.cep || ''))}</CEP>
-      </enderEmit>
-      <CNAE>${escapeXml(empresa.cnae_principal || '')}</CNAE>
-    </emit>
-    ${clienteXml}
-    ${itensXml}
-    <total>
-      <ICMSTot>
-        <vProd>${formatarValor(notaFiscal.valor_total)}</vProd>
-        <vNF>${formatarValor(notaFiscal.valor_total)}</vNF>
-      </ICMSTot>
-    </total>
-    <infAdic>
-      <infCpl>CSC ID: ${escapeXml(cscId)} | CSC: ${escapeXml(csc)}</infCpl>
-    </infAdic>
-  </infNFe>
+<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  <idLote>${idLote}</idLote>
+  <indSinc>${indSinc}</indSinc>
+  <NFe>
+    <infNFe Id="NFe${notaFiscal.chave_acesso}" versao="4.00">
+      <ide>
+        <cUF>${cUF}</cUF>
+        <cNF>${pad(notaFiscal.numero, 8)}</cNF>
+        <natOp>VENDA</natOp>
+        <mod>65</mod>
+        <serie>${notaFiscal.serie}</serie>
+        <nNF>${notaFiscal.numero}</nNF>
+        <dhEmi>${dhEmi}</dhEmi>
+        <tpNF>1</tpNF>
+        <idDest>1</idDest>
+        <cMunFG>${escapeXml(empresa.codigo_municipio || '')}</cMunFG>
+        <tpImp>4</tpImp>
+        <tpEmis>1</tpEmis>
+        <cDV>${notaFiscal.chave_acesso.slice(-1)}</cDV>
+        <tpAmb>${notaFiscal.ambiente === 'producao' ? 1 : 2}</tpAmb>
+        <finNFe>1</finNFe>
+        <indFinal>1</indFinal>
+        <indPres>1</indPres>
+        <procEmi>0</procEmi>
+        <verProc>1.0.0</verProc>
+      </ide>
+
+      <emit>
+        <CNPJ>${escapeXml(somenteNumeros(empresa.cnpj || ''))}</CNPJ>
+        <xNome>${escapeXml(empresa.razao_social || '')}</xNome>
+        <xFant>${escapeXml(empresa.nome_fantasia || '')}</xFant>
+        <enderEmit>
+          <xLgr>${escapeXml(empresa.logradouro || '')}</xLgr>
+          <nro>${escapeXml(empresa.numero || '')}</nro>
+          ${empresa.complemento ? `<xCpl>${escapeXml(empresa.complemento)}</xCpl>` : ''}
+          <xBairro>${escapeXml(empresa.bairro || '')}</xBairro>
+          <cMun>${escapeXml(empresa.codigo_municipio || '')}</cMun>
+          <xMun>${escapeXml(empresa.municipio || '')}</xMun>
+          <UF>${escapeXml(empresa.uf || '')}</UF>
+          <CEP>${escapeXml(somenteNumeros(empresa.cep || ''))}</CEP>
+          <cPais>1058</cPais>
+          <xPais>BRASIL</xPais>
+          ${empresa.telefone ? `<fone>${escapeXml(somenteNumeros(empresa.telefone))}</fone>` : ''}
+        </enderEmit>
+        <IE>${escapeXml(empresa.ie || '')}</IE>
+        <CRT>${escapeXml(crt)}</CRT>
+      </emit>
+
+      ${clienteXml}
+
+      ${itensXml}
+
+      <total>
+        <ICMSTot>
+          <vBC>0.00</vBC>
+          <vICMS>0.00</vICMS>
+          <vICMSDeson>0.00</vICMSDeson>
+          <vFCP>0.00</vFCP>
+          <vBCST>0.00</vBCST>
+          <vST>0.00</vST>
+          <vFCPST>0.00</vFCPST>
+          <vFCPSTRet>0.00</vFCPSTRet>
+          <vProd>${formatarValor(valorTotal)}</vProd>
+          <vFrete>0.00</vFrete>
+          <vSeg>0.00</vSeg>
+          <vDesc>0.00</vDesc>
+          <vII>0.00</vII>
+          <vIPI>0.00</vIPI>
+          <vIPIDevol>0.00</vIPIDevol>
+          <vPIS>0.00</vPIS>
+          <vCOFINS>0.00</vCOFINS>
+          <vOutro>0.00</vOutro>
+          <vNF>${formatarValor(valorTotal)}</vNF>
+        </ICMSTot>
+      </total>
+
+      <transp>
+        <modFrete>9</modFrete>
+      </transp>
+
+      ${pagXml}
+
+      <infAdic>
+        <infCpl>Documento emitido por sistema próprio.</infCpl>
+      </infAdic>
+    </infNFe>
+  </NFe>
 </enviNFe>`;
 }
 
@@ -245,26 +372,27 @@ function assinarXml(xml, empresa) {
   const pemCert = certificado.pemCert;
   const certBase64 = limparPem(pemCert);
 
-  const sig = new SignedXml();
+  const sig = new SignedXml({
+    privateKey: pemKey,
+    publicCert: pemCert,
+    canonicalizationAlgorithm: 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
+    signatureAlgorithm: 'http://www.w3.org/2000/09/xmldsig#rsa-sha1'
+  });
 
-  sig.privateKey = pemKey;
-  sig.signatureAlgorithm = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
-  sig.canonicalizationAlgorithm = 'http://www.w3.org/2001/10/xml-exc-c14n#';
+  sig.getKeyInfoContent = () => {
+    return `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
+  };
+
+  sig.getCertFromKeyInfo = () => null;
 
   sig.addReference({
     xpath: "//*[local-name(.)='infNFe']",
     transforms: [
       'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
-      'http://www.w3.org/2001/10/xml-exc-c14n#'
+      'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
     ],
-    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256'
+    digestAlgorithm: 'http://www.w3.org/2000/09/xmldsig#sha1'
   });
-
-  sig.keyInfoProvider = {
-    getKeyInfo() {
-      return `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
-    }
-  };
 
   sig.computeSignature(xml, {
     location: {
@@ -471,8 +599,8 @@ async function emitirNfce(vendaId) {
 
   const numero = Number(empresa.proximo_numero_nfce || 1);
   const serie = Number(empresa.serie_nfce || 1);
-  const chaveAcesso = gerarChaveAcesso(empresa, venda, numero, serie);
-  const valorTotal = itens.reduce((soma, item) => soma + Number(item.subtotal || 0), 0);
+  const chaveAcesso = gerarChaveAcesso(empresa, numero, serie);
+  const valorTotal = Number(venda.total || itens.reduce((soma, item) => soma + Number(item.subtotal || 0), 0));
 
   const notaFiscal = {
     venda_id: vendaId,
@@ -480,7 +608,7 @@ async function emitirNfce(vendaId) {
     serie,
     ambiente: empresa.ambiente || 'homologacao',
     status: 'pendente',
-    data_emissao: new Date().toISOString(),
+    data_emissao: formatarDataHoraBrasil(),
     chave_acesso: chaveAcesso,
     valor_total: valorTotal
   };
@@ -515,9 +643,13 @@ async function emitirNfce(vendaId) {
 
       sefazService.transmitirNfce(xmlAssinado, notaFiscal.ambiente, empresa.certificado_path, empresa.certificado_senha)
         .then((retorno) => {
-          const statusFinal = retorno.codigo === '100' ? 'autorizado' : ['103', '105'].includes(retorno.codigo) ? 'processando' : 'rejeitado';
+          const statusFinal = ['100', '150'].includes(retorno.codigo)
+            ? 'autorizado'
+            : ['103', '105'].includes(retorno.codigo)
+              ? 'processando'
+              : 'rejeitado';
           const nfceEmitida = statusFinal === 'autorizado' ? 1 : 0;
-          const dataAutorizacao = retorno.dataAutorizacao || new Date().toISOString();
+          const dataAutorizacao = retorno.dataAutorizacao || formatarDataHoraBrasil();
           const retornoXmlPath = salvarXml(
             retorno.xmlRetorno || '<retorno/>',
             `nfce_venda_${vendaId}_n${numero}_retorno`

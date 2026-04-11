@@ -17,11 +17,15 @@ const uploadCertificado = multer({
 });
 
 function tratarErro(res, error) {
-  console.error('[FISCAL]', error);
+  console.error('[FISCAL] ERRO:', error);
+  console.error('[FISCAL] STACK:', error?.stack || 'sem stack');
+
   const status = error.validationErrors ? 400 : 500;
+
   res.status(status).json({
-    error: error.message || 'Erro interno no módulo fiscal.',
-    validationErrors: error.validationErrors || undefined
+    error: error?.message || 'Erro interno no módulo fiscal.',
+    stack: process.env.NODE_ENV !== 'production' ? error?.stack : undefined,
+    validationErrors: error?.validationErrors || undefined
   });
 }
 
