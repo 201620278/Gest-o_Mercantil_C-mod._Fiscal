@@ -91,46 +91,46 @@ function montarPagXml(venda, valorTotal) {
       </pag>`;
 }
 
-function calcularDV(chave) {
+function calcularDVChave(chave43) {
   let soma = 0;
   let peso = 2;
 
-  for (let i = chave.length - 1; i >= 0; i--) {
-    soma += Number(chave[i]) * peso;
+  for (let i = chave43.length - 1; i >= 0; i--) {
+    soma += Number(chave43[i]) * peso;
     peso = peso === 9 ? 2 : peso + 1;
   }
 
   const resto = soma % 11;
-  return resto < 2 ? 0 : 11 - resto;
+  return resto === 0 || resto === 1 ? 0 : 11 - resto;
 }
 
-function gerarChaveAcesso(empresa, numero, serie) {
-  const cUF = obterCodigoUF(empresa.uf); // ex: 23
-  const data = new Date();
-  
+function gerarCodigoNumerico() {
+  return String(Math.floor(Math.random() * 99999999)).padStart(8, '0');
+}
+
+function montarChaveAcesso({ cUF, dhEmi, cnpj, modelo, serie, numero, tpEmis = '1', cNF }) {
+  const data = new Date(dhEmi);
   const ano = String(data.getFullYear()).slice(-2);
   const mes = String(data.getMonth() + 1).padStart(2, '0');
 
-  const CNPJ = somenteNumeros(empresa.cnpj).padStart(14, '0');
-  const modelo = '65';
-  const serieStr = String(serie).padStart(3, '0');
-  const numeroStr = String(numero).padStart(9, '0');
-  const tpEmis = '1';
-  const cNF = Math.floor(Math.random() * 99999999).toString().padStart(8, '0');
+  const chave43 =
+    String(cUF).padStart(2, '0') +
+    ano +
+    mes +
+    somenteNumeros(cnpj).padStart(14, '0') +
+    String(modelo).padStart(2, '0') +
+    String(serie).padStart(3, '0') +
+    String(numero).padStart(9, '0') +
+    String(tpEmis) +
+    String(cNF).padStart(8, '0');
 
-  let chaveSemDV =
-    cUF +
-    ano + mes +
-    CNPJ +
-    modelo +
-    serieStr +
-    numeroStr +
-    tpEmis +
-    cNF;
+  const cDV = calcularDVChave(chave43);
 
-  const dv = calcularDV(chaveSemDV);
-
-  return chaveSemDV + dv;
+  return {
+    chave: chave43 + String(cDV),
+    cDV: String(cDV),
+    cNF: String(cNF).padStart(8, '0')
+  };
 }
 
 function obterCodigoUF(uf) {
@@ -246,7 +246,9 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '0000000
   }
 
   const cUF = obterCodigoUF(empresa.uf);
-  const dhEmi = formatarDataHoraBrasil();
+  const dhEmi = notaFiscal.data_emissao || formatarDataHoraBrasil();
+  const cNF = String(notaFiscal.codigo_numerico || '').padStart(8, '0');
+  const cDV = String(notaFiscal.digito_verificador || notaFiscal.chave_acesso.slice(-1));
   const pagXml = montarPagXml(venda, valorTotal);
 
   let xml = `<?xml version="1.0" encoding="UTF-8"?>
@@ -257,7 +259,7 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '0000000
     <infNFe Id="NFe${notaFiscal.chave_acesso}" versao="4.00">
       <ide>
         <cUF>${cUF}</cUF>
-        <cNF>${pad(notaFiscal.numero, 8)}</cNF>
+        <cNF>${cNF}</cNF>
         <natOp>VENDA</natOp>
         <mod>65</mod>
         <serie>${notaFiscal.serie}</serie>
@@ -268,7 +270,7 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '0000000
         <cMunFG>${escapeXml(empresa.codigo_municipio || '')}</cMunFG>
         <tpImp>4</tpImp>
         <tpEmis>1</tpEmis>
-        <cDV>${notaFiscal.chave_acesso.slice(-1)}</cDV>
+        <cDV>${cDV}</cDV>
         <tpAmb>${notaFiscal.ambiente === 'producao' ? 1 : 2}</tpAmb>
         <finNFe>1</finNFe>
         <indFinal>1</indFinal>
@@ -617,7 +619,19 @@ async function emitirNfce(vendaId) {
 
   const numero = Number(empresa.proximo_numero_nfce || 1);
   const serie = Number(empresa.serie_nfce || 1);
-  const chaveAcesso = gerarChaveAcesso(empresa, numero, serie);
+  const dhEmi = formatarDataHoraBrasil();
+  const cUF = obterCodigoUF(empresa.uf);
+  const cNF = gerarCodigoNumerico();
+  const chaveMontada = montarChaveAcesso({
+    cUF,
+    dhEmi,
+    cnpj: empresa.cnpj,
+    modelo: '65',
+    serie,
+    numero,
+    tpEmis: '1',
+    cNF
+  });
   const valorTotal = Number(venda.total || itens.reduce((soma, item) => soma + Number(item.subtotal || 0), 0));
 
   const notaFiscal = {
@@ -626,8 +640,10 @@ async function emitirNfce(vendaId) {
     serie,
     ambiente: empresa.ambiente || 'homologacao',
     status: 'pendente',
-    data_emissao: formatarDataHoraBrasil(),
-    chave_acesso: chaveAcesso,
+    data_emissao: dhEmi,
+    chave_acesso: chaveMontada.chave,
+    codigo_numerico: chaveMontada.cNF,
+    digito_verificador: chaveMontada.cDV,
     valor_total: valorTotal
   };
 
@@ -651,7 +667,7 @@ async function emitirNfce(vendaId) {
       notaFiscal.ambiente,
       notaFiscal.status,
       notaFiscal.data_emissao,
-      chaveAcesso,
+      notaFiscal.chave_acesso,
       xmlPath,
       xmlAssinadoPath
     ], function(errInsert) {
