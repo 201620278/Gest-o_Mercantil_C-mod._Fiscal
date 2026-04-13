@@ -53,7 +53,8 @@ async function listarPerfis() {
   const rows = await all(`SELECT * FROM configuracao_fiscal ORDER BY CASE WHEN ambiente = 'homologacao' THEN 0 ELSE 1 END, id DESC`);
   const perfis = {};
   for (const row of rows) {
-    if (!perfis[row.ambiente]) perfis[row.ambiente] = row;
+    const perfil = mapPerfil(row);
+    if (!perfis[row.ambiente]) perfis[row.ambiente] = perfil;
   }
   const ambienteAtivo = (await get(`SELECT valor FROM configuracoes WHERE chave = 'ambiente_fiscal_ativo'`))?.valor || 'homologacao';
   return {
@@ -68,7 +69,8 @@ async function listarPerfis() {
 async function obterPerfil(ambiente) {
   await garantirEstruturaConfiguracaoFiscal();
   const env = ambiente === 'producao' ? 'producao' : 'homologacao';
-  return get(`SELECT * FROM configuracao_fiscal WHERE ambiente = ? ORDER BY id DESC LIMIT 1`, [env]);
+  const row = await get(`SELECT * FROM configuracao_fiscal WHERE ambiente = ? ORDER BY id DESC LIMIT 1`, [env]);
+  return mapPerfil(row);
 }
 
 async function obterPerfilAtivo() {
@@ -96,8 +98,17 @@ function normalizarPayload(payload = {}, ambientePadrao = 'homologacao') {
     uf: String(payload.uf || '').trim().toUpperCase(),
     serie_nfce: Number(payload.serie_nfce || 1),
     proximo_numero_nfce: Number(payload.proximo_numero_nfce || 1),
-    CSC: String(payload.CSC || payload.csc || '').trim(),
+    CSC: String(payload.CSC || payload.csc || payload.csc_token || '').trim(),
     CSC_ID: String(payload.CSC_ID || payload.csc_id || '').trim()
+  };
+}
+
+function mapPerfil(perfil) {
+  if (!perfil) return null;
+  return {
+    ...perfil,
+    csc_token: perfil.CSC,
+    csc_id: perfil.CSC_ID
   };
 }
 
@@ -157,7 +168,7 @@ async function salvarPerfil(payload = {}) {
         data.cnae_principal, data.serie_nfce, data.proximo_numero_nfce,
         data.CSC, data.CSC_ID, existente.id
       ]);
-    return { ...existente, ...data };
+    return mapPerfil({ ...existente, ...data });
   }
 
   const result = await run(`INSERT INTO configuracao_fiscal (
@@ -170,7 +181,7 @@ async function salvarPerfil(payload = {}) {
     data.municipio, data.uf, data.cep, data.cnae_principal, data.serie_nfce,
     data.proximo_numero_nfce, data.CSC, data.CSC_ID
   ]);
-  return { id: result.lastID, ...data };
+  return mapPerfil({ id: result.lastID, ...data });
 }
 
 async function definirAmbienteAtivo(ambiente) {
@@ -189,8 +200,8 @@ function avaliarProntidaoPerfil(perfil) {
   }
   if (!perfil.certificado_path) pendencias.push('Certificado digital não enviado');
   if (!perfil.certificado_senha) pendencias.push('Senha do certificado não cadastrada');
-  if (!perfil.CSC) pendencias.push('CSC não informado');
-  if (!perfil.CSC_ID) pendencias.push('ID CSC não informado');
+  if (!perfil.CSC && !perfil.csc_token) pendencias.push('CSC não informado');
+  if (!perfil.CSC_ID && !perfil.csc_id) pendencias.push('ID CSC não informado');
   if (!perfil.cnpj || perfil.cnpj.length !== 14) pendencias.push('CNPJ inválido');
   if (!perfil.ie) pendencias.push('Inscrição Estadual não informada');
   if (!perfil.codigo_municipio) pendencias.push('Código IBGE do município não informado');

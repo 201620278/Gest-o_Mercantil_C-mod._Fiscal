@@ -43,9 +43,104 @@ function formatarValor(value) {
 
 function formatarDataHoraBrasil() {
   const agora = new Date();
-  const offset = -3; // Brasil/CE
-  const local = new Date(agora.getTime() + (offset * 60 * 60 * 1000) + (agora.getTimezoneOffset() * 60000));
-  return local.toISOString().slice(0, 19) + '-03:00';
+
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, '0');
+  const dia = String(agora.getDate()).padStart(2, '0');
+  const hora = String(agora.getHours()).padStart(2, '0');
+  const minuto = String(agora.getMinutes()).padStart(2, '0');
+  const segundo = String(agora.getSeconds()).padStart(2, '0');
+
+  const offsetMinutos = -agora.getTimezoneOffset();
+  const sinal = offsetMinutos >= 0 ? '+' : '-';
+  const offsetAbs = Math.abs(offsetMinutos);
+  const offsetHora = String(Math.floor(offsetAbs / 60)).padStart(2, '0');
+  const offsetMin = String(offsetAbs % 60).padStart(2, '0');
+
+  return `${ano}-${mes}-${dia}T${hora}:${minuto}:${segundo}${sinal}${offsetHora}:${offsetMin}`;
+}
+
+function formatarDataHoraEmissaoSegura() {
+  const data = new Date(Date.now() - 10000); // 10 segundos atrás
+
+  const ano = data.getFullYear();
+  const mes = String(data.getMonth() + 1).padStart(2, '0');
+  const dia = String(data.getDate()).padStart(2, '0');
+  const hora = String(data.getHours()).padStart(2, '0');
+  const minuto = String(data.getMinutes()).padStart(2, '0');
+  const segundo = String(data.getSeconds()).padStart(2, '0');
+
+  const offsetMinutos = -data.getTimezoneOffset();
+  const sinal = offsetMinutos >= 0 ? '+' : '-';
+  const offsetAbs = Math.abs(offsetMinutos);
+  const offsetHora = String(Math.floor(offsetAbs / 60)).padStart(2, '0');
+  const offsetMin = String(offsetAbs % 60).padStart(2, '0');
+
+  return `${ano}-${mes}-${dia}T${hora}:${minuto}:${segundo}${sinal}${offsetHora}:${offsetMin}`;
+}
+
+function gerarUrlConsultaNfce(ambiente, uf) {
+  const urls = {
+    CE: {
+      homologacao: 'https://nfceh.sefaz.ce.gov.br/pages/consultaNota.jsf',
+      producao: 'https://nfce.sefaz.ce.gov.br/pages/consultaNota.jsf'
+    }
+  };
+
+  const ufUpper = String(uf || '').toUpperCase();
+  return ambiente === 'producao'
+    ? urls[ufUpper]?.producao || ''
+    : urls[ufUpper]?.homologacao || '';
+}
+
+function gerarQrCodeNfce(chave, ambiente, empresa) {
+  const crypto = require('crypto');
+
+  const urlConsulta = gerarUrlConsultaNfce(ambiente, empresa.uf);
+  const csc = String(empresa.csc_token || empresa.CSC || '').trim();
+  const idCSC = String(empresa.csc_id || empresa.CSC_ID || '').trim();
+  const tpAmb = ambiente === 'producao' ? '1' : '2';
+  const versao = '2';
+
+  if (!urlConsulta) {
+    throw new Error(`URL de consulta NFC-e não configurada para UF ${empresa.uf}.`);
+  }
+
+  if (!csc || !idCSC) {
+    throw new Error('CSC Token e CSC ID são obrigatórios para gerar o QR Code da NFC-e.');
+  }
+
+  const parametros =
+    `chNFe=${chave}` +
+    `&nVersao=${versao}` +
+    `&tpAmb=${tpAmb}` +
+    `&cIdToken=${idCSC}`;
+
+  const hash = crypto
+    .createHash('sha1')
+    .update(parametros + csc, 'utf8')
+    .digest('hex')
+    .toUpperCase();
+
+  return `${urlConsulta}?${parametros}&cHashQRCode=${hash}`;
+}
+
+function inserirInfNFeSupl(xmlAssinado, qrCodeUrl, urlChave) {
+  const blocoSuplementar = `
+<infNFeSupl>
+  <qrCode>${escapeXml(qrCodeUrl)}</qrCode>
+  <urlChave>${escapeXml(urlChave)}</urlChave>
+</infNFeSupl>`;
+
+  if (xmlAssinado.includes('</Signature></NFe>')) {
+    return xmlAssinado.replace('</Signature></NFe>', `</Signature>${blocoSuplementar}</NFe>`);
+  }
+
+  if (xmlAssinado.includes('</infNFe></NFe>')) {
+    return xmlAssinado.replace('</infNFe></NFe>', `</infNFe>${blocoSuplementar}</NFe>`);
+  }
+
+  throw new Error('Não foi possível inserir infNFeSupl no XML assinado.');
 }
 
 function normalizarFormaPagamento(forma) {
@@ -246,7 +341,7 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '0000000
   }
 
   const cUF = obterCodigoUF(empresa.uf);
-  const dhEmi = notaFiscal.data_emissao || formatarDataHoraBrasil();
+  const dhEmi = notaFiscal.data_emissao || formatarDataHoraEmissaoSegura();
   const cNF = String(notaFiscal.codigo_numerico || '').padStart(8, '0');
   const cDV = String(notaFiscal.digito_verificador || notaFiscal.chave_acesso.slice(-1));
   const pagXml = montarPagXml(venda, valorTotal);
@@ -359,10 +454,12 @@ function salvarXml(conteudo, nomeArquivo) {
 }
 
 function limparPem(pem) {
-  return String(pem || '')
-    .replace('-----BEGIN CERTIFICATE-----', '')
-    .replace('-----END CERTIFICATE-----', '')
-    .replace(/\r?\n|\r/g, '')
+  if (!pem) return '';
+
+  return String(pem)
+    .replace(/-----BEGIN CERTIFICATE-----/g, '')
+    .replace(/-----END CERTIFICATE-----/g, '')
+    .replace(/[\r\n\t ]+/g, '')
     .trim();
 }
 
@@ -391,6 +488,10 @@ function assinarXml(xml, empresa) {
   const pemKey = certificado.pemKey;
   const pemCert = certificado.pemCert;
   const certBase64 = limparPem(pemCert);
+
+  if (!certBase64) {
+    throw new Error('Certificado inválido para assinatura: conteúdo X509 vazio.');
+  }
 
   const sig = new SignedXml({
     privateKey: pemKey,
@@ -421,7 +522,16 @@ function assinarXml(xml, empresa) {
     }
   });
 
-  return sig.getSignedXml();
+  let xmlAssinado = sig.getSignedXml();
+
+  xmlAssinado = xmlAssinado.replace(
+    /<X509Certificate>\s*([\s\S]*?)\s*<\/X509Certificate>/g,
+    (_, conteudo) => `<X509Certificate>${String(conteudo).replace(/[\r\n\t ]+/g, '')}</X509Certificate>`
+  );
+
+  xmlAssinado = xmlAssinado.replace(/>\s+</g, '><').trim();
+
+  return xmlAssinado;
 }
 
 function inserirEventoNota(notaFiscalId, tipoEvento, protocolo, justificativa, resposta, xmlEventoPath = null) {
@@ -480,6 +590,10 @@ function buscarVendaCompleta(vendaId) {
 
         try {
           const empresa = await fiscalConfigService.obterPerfilAtivo();
+
+          if (!empresa?.csc_token || !empresa?.csc_id) {
+            throw new Error('CSC Token e CSC ID não configurados na empresa.');
+          }
 
           resolve({
             venda,
@@ -619,7 +733,7 @@ async function emitirNfce(vendaId) {
 
   const numero = Number(empresa.proximo_numero_nfce || 1);
   const serie = Number(empresa.serie_nfce || 1);
-  const dhEmi = formatarDataHoraBrasil();
+  const dhEmi = formatarDataHoraEmissaoSegura();
   const cUF = obterCodigoUF(empresa.uf);
   const cNF = gerarCodigoNumerico();
   const chaveMontada = montarChaveAcesso({
@@ -647,11 +761,29 @@ async function emitirNfce(vendaId) {
     valor_total: valorTotal
   };
 
+  const chaveAcesso = notaFiscal.chave_acesso;
   const loteId = String(Date.now()).padStart(15, '0').slice(-15);
   const xml = montarXml(venda, notaFiscal, empresa, itens, cliente, loteId, 1);
   const xmlPath = salvarXml(xml, `nfce_venda_${vendaId}_n${numero}`);
 
-  const xmlAssinado = assinarXml(xml, empresa);
+  const xmlAssinadoBase = assinarXml(xml, empresa);
+
+  const qrCodeUrl = gerarQrCodeNfce(
+    notaFiscal.chave_acesso,
+    notaFiscal.ambiente,
+    empresa
+  );
+
+  const urlChave = gerarUrlConsultaNfce(
+    notaFiscal.ambiente,
+    empresa.uf
+  );
+
+  const xmlAssinado = inserirInfNFeSupl(
+    xmlAssinadoBase,
+    qrCodeUrl,
+    urlChave
+  );
   const xmlAssinadoPath = salvarXml(xmlAssinado, `nfce_venda_${vendaId}_n${numero}_assinado`);
 
   return new Promise((resolve, reject) => {
@@ -718,7 +850,7 @@ async function emitirNfce(vendaId) {
               WHERE id = ?
             `, [
               statusFinal,
-              chaveAcesso,
+              notaFiscal.chave_acesso,
               nfceEmitida,
               vendaId
             ], (errUpdateVenda) => {
@@ -754,7 +886,7 @@ async function emitirNfce(vendaId) {
                   venda_id: vendaId,
                   numero,
                   serie,
-                  chave_acesso: chaveAcesso,
+                  chave_acesso: notaFiscal.chave_acesso,
                   xml_path: xmlPath,
                   xml_assinado_path: xmlAssinadoPath,
                   retorno_xml_path: retornoXmlPath,

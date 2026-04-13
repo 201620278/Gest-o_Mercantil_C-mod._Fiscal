@@ -130,7 +130,7 @@ function renderConfiguracoes(configuracoes, usuarios) {
             <div class="card-body">
                 <p><strong>Versão:</strong> 1.0.0</p>
                 <p><strong>Data de Instalação:</strong> ${new Date().toLocaleDateString()}</p>
-                <p><strong>Desenvolvido por:</strong> Mercadão da Economia</p>
+                <p><strong>Desenvolvido por:</strong> Cicero Diego</p>
             </div>
         </div>
         ${blocoUsuarios}
