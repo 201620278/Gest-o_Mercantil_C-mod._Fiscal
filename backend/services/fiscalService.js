@@ -126,21 +126,19 @@ function gerarQrCodeNfce(chave, ambiente, empresa) {
 }
 
 function inserirInfNFeSupl(xmlAssinado, qrCodeUrl, urlChave) {
-  const blocoSuplementar = `
-<infNFeSupl>
-  <qrCode>${escapeXml(qrCodeUrl)}</qrCode>
-  <urlChave>${escapeXml(urlChave)}</urlChave>
-</infNFeSupl>`;
+  const blocoSuplementar = `<infNFeSupl><qrCode>${escapeXml(qrCodeUrl)}</qrCode><urlChave>${escapeXml(urlChave)}</urlChave></infNFeSupl>`;
+
+  let xmlFinal;
 
   if (xmlAssinado.includes('</Signature></NFe>')) {
-    return xmlAssinado.replace('</Signature></NFe>', `</Signature>${blocoSuplementar}</NFe>`);
+    xmlFinal = xmlAssinado.replace('</Signature></NFe>', `</Signature>${blocoSuplementar}</NFe>`);
+  } else if (xmlAssinado.includes('</infNFe></NFe>')) {
+    xmlFinal = xmlAssinado.replace('</infNFe></NFe>', `</infNFe>${blocoSuplementar}</NFe>`);
+  } else {
+    throw new Error('Não foi possível inserir infNFeSupl no XML assinado.');
   }
 
-  if (xmlAssinado.includes('</infNFe></NFe>')) {
-    return xmlAssinado.replace('</infNFe></NFe>', `</infNFe>${blocoSuplementar}</NFe>`);
-  }
-
-  throw new Error('Não foi possível inserir infNFeSupl no XML assinado.');
+  return String(xmlFinal).replace(/>\s+</g, '><').trim();
 }
 
 function normalizarFormaPagamento(forma) {
@@ -459,7 +457,7 @@ function limparPem(pem) {
   return String(pem)
     .replace(/-----BEGIN CERTIFICATE-----/g, '')
     .replace(/-----END CERTIFICATE-----/g, '')
-    .replace(/[\r\n\t ]+/g, '')
+    .replace(/\s+/g, '')
     .trim();
 }
 
@@ -495,14 +493,12 @@ function assinarXml(xml, empresa) {
 
   const sig = new SignedXml({
     privateKey: pemKey,
-    publicCert: pemCert,
     canonicalizationAlgorithm: 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
     signatureAlgorithm: 'http://www.w3.org/2000/09/xmldsig#rsa-sha1'
   });
 
-  sig.getKeyInfoContent = () => {
-    return `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
-  };
+  sig.getKeyInfoContent = () =>
+    `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
 
   sig.getCertFromKeyInfo = () => null;
 
@@ -525,8 +521,9 @@ function assinarXml(xml, empresa) {
   let xmlAssinado = sig.getSignedXml();
 
   xmlAssinado = xmlAssinado.replace(
-    /<X509Certificate>\s*([\s\S]*?)\s*<\/X509Certificate>/g,
-    (_, conteudo) => `<X509Certificate>${String(conteudo).replace(/[\r\n\t ]+/g, '')}</X509Certificate>`
+    /<X509Certificate>([\s\S]*?)<\/X509Certificate>/g,
+    (_, conteudo) =>
+      `<X509Certificate>${String(conteudo).replace(/\s+/g, '')}</X509Certificate>`
   );
 
   xmlAssinado = xmlAssinado.replace(/>\s+</g, '><').trim();
