@@ -42,7 +42,6 @@ function buildSoapEnvelope(xmlAssinado) {
     .replace(/^\uFEFF/, '')
     .replace(/^\s+/, '')
     .replace(/^<\?xml[^>]*\?>\s*/i, '')
-    .replace(/>\s+</g, '><')
     .trim();
 
   return `<?xml version="1.0" encoding="UTF-8"?>` +

@@ -148,6 +148,7 @@ function obterCodigoUF(uf) {
 function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '000000000000001', indSinc = 1) {
   const crt = String(empresa.crt || '1').trim();
   const valorTotal = Number(notaFiscal.valor_total || 0);
+  const ambienteHomologacao = notaFiscal.ambiente !== 'producao';
 
   const itensXml = itens.map((item, index) => {
     const nItem = index + 1;
@@ -182,12 +183,21 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '0000000
           </ICMS>`;
     }
 
+    const nomeProduto = String(item.nome || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 120);
+
     return `
       <det nItem="${nItem}">
         <prod>
           <cProd>${escapeXml(item.produto_id)}</cProd>
           <cEAN>${escapeXml(item.codigo_barras || 'SEM GTIN')}</cEAN>
-          <xProd>${escapeXml(item.nome || '').substring(0, 120)}</xProd>
+          <xProd>${
+            ambienteHomologacao && index === 0
+              ? 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
+              : escapeXml(nomeProduto)
+          }</xProd>
           <NCM>${escapeXml(item.ncm || '')}</NCM>
           <CFOP>${escapeXml(cfop)}</CFOP>
           <uCom>${escapeXml(unidade)}</uCom>
@@ -239,7 +249,7 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '0000000
   const dhEmi = formatarDataHoraBrasil();
   const pagXml = montarPagXml(venda, valorTotal);
 
-  return `<?xml version="1.0" encoding="UTF-8"?>
+  let xml = `<?xml version="1.0" encoding="UTF-8"?>
 <enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
   <idLote>${idLote}</idLote>
   <indSinc>${indSinc}</indSinc>
@@ -328,6 +338,14 @@ function montarXml(venda, notaFiscal, empresa, itens, cliente, idLote = '0000000
     </infNFe>
   </NFe>
 </enviNFe>`;
+
+  let xmlFinal = xml;
+  xmlFinal = xmlFinal.replace(/\r?\n|\r/g, '');
+  xmlFinal = xmlFinal.replace(/>\s+</g, '><');
+  xmlFinal = xmlFinal.replace(/\s{2,}/g, ' ');
+  xmlFinal = xmlFinal.trim();
+
+  return xmlFinal;
 }
 
 function salvarXml(conteudo, nomeArquivo) {

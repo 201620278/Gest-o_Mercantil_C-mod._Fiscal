@@ -1,5 +1,8 @@
 let produtosVenda = [];
 let clientesVenda = [];
+let vendasCache = [];
+let vendasMostrandoTodas = false;
+const VENDAS_INICIAIS = 10;
 
 function loadVendas() {
     $.ajax({
@@ -7,7 +10,9 @@ function loadVendas() {
         method: 'GET',
         cache: false,
         success: function(vendas) {
-            renderVendas(Array.isArray(vendas) ? vendas : []);
+            vendasCache = Array.isArray(vendas) ? vendas : [];
+            vendasMostrandoTodas = false;
+            renderVendas(vendasCache);
         },
         error: function(xhr) {
             console.error('Erro ao carregar vendas:', xhr);
@@ -76,7 +81,173 @@ function getBadgeVenda(status) {
     return `<span class="badge bg-secondary">${status || '-'}</span>`;
 }
 
+function normalizeDate(value) {
+    if (!value) {
+        return null;
+    }
+    const date = new Date(value);
+
+    if (Number.isNaN(date.getTime())) {
+        return null;
+    }
+
+    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+}
+
+function getVendasPorMes(vendas) {
+    const meses = {};
+
+    vendas.forEach(venda => {
+        const data = new Date(venda.created_at || venda.data_venda);
+        if (Number.isNaN(data.getTime())) {
+            return;
+        }
+
+        const chave = `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}`;
+        if (!meses[chave]) {
+            meses[chave] = {
+                ano: data.getFullYear(),
+                mes: data.getMonth() + 1,
+                vendas: [],
+                totalReceita: 0,
+                totalDesconto: 0,
+            };
+        }
+
+        meses[chave].vendas.push(venda);
+        meses[chave].totalReceita += Number(venda.total || 0);
+        meses[chave].totalDesconto += Number(venda.desconto || 0);
+    });
+
+    return Object.values(meses)
+        .sort((a, b) => b.ano - a.ano || b.mes - a.mes)
+        .map(item => ({
+            ...item,
+            nome: `${String(item.mes).padStart(2, '0')}/${item.ano}`,
+            vendasCount: item.vendas.length,
+            totalLiquido: item.totalReceita - item.totalDesconto,
+        }));
+}
+
+function renderResumoMensal(meses) {
+    if (!meses.length) {
+        return '<div class="alert alert-light border">Nenhum histórico mensal disponível.</div>';
+    }
+
+    const linhas = meses.map(mes => `
+        <tr>
+            <td>${mes.nome}</td>
+            <td>${mes.vendasCount}</td>
+            <td>${formatCurrency(mes.totalReceita)}</td>
+            <td>${formatCurrency(mes.totalDesconto)}</td>
+            <td>${formatCurrency(mes.totalLiquido)}</td>
+        </tr>
+    `).join('');
+
+    return `
+        <div class="card mb-3">
+            <div class="card-header">
+                <strong>Histórico Mensal</strong>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Mês</th>
+                                <th>Vendas</th>
+                                <th>Total</th>
+                                <th>Descontos</th>
+                                <th>Receita Líquida</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${linhas}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+function getVendasFiltradas() {
+    const termo = $('#vendasBuscaNfce').val()?.trim().toLowerCase();
+    const dataDe = $('#vendasBuscaDataDe').val();
+    const dataAte = $('#vendasBuscaDataAte').val();
+
+    return vendasCache.filter(venda => {
+        if (termo) {
+            const nfceNumero = venda.numero_nfce ? String(venda.numero_nfce) : '';
+            const chave = venda.chave_nfce ? String(venda.chave_nfce) : '';
+            const codigo = venda.codigo ? String(venda.codigo) : '';
+            const busca = `${nfceNumero} ${chave} ${codigo}`.toLowerCase();
+
+            if (!busca.includes(termo)) {
+                return false;
+            }
+        }
+
+        if (dataDe || dataAte) {
+            const dataVenda = normalizeDate(venda.created_at || venda.data_venda);
+            if (!dataVenda) {
+                return false;
+            }
+
+            if (dataDe) {
+                const de = normalizeDate(dataDe);
+                if (de && dataVenda < de) {
+                    return false;
+                }
+            }
+
+            if (dataAte) {
+                const ate = normalizeDate(dataAte);
+                if (ate && dataVenda > ate) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    });
+}
+
+function aplicarFiltrosVendas() {
+    vendasMostrandoTodas = false;
+    renderVendas(getVendasFiltradas());
+}
+
+function limparFiltrosVendas() {
+    $('#vendasBuscaNfce').val('');
+    $('#vendasBuscaDataDe').val('');
+    $('#vendasBuscaDataAte').val('');
+    vendasMostrandoTodas = false;
+    renderVendas(vendasCache);
+}
+
+function toggleVendasMais() {
+    vendasMostrandoTodas = !vendasMostrandoTodas;
+    renderVendas(getVendasFiltradas());
+}
+
 function renderVendas(vendas) {
+    const termo = $('#vendasBuscaNfce').val()?.trim();
+    const dataDe = $('#vendasBuscaDataDe').val();
+    const dataAte = $('#vendasBuscaDataAte').val();
+    const filtrosAtivos = Boolean(termo || dataDe || dataAte);
+    const mostrarTodas = filtrosAtivos || vendasMostrandoTodas;
+    const totalVendas = vendas.length;
+    const vendasVisiveis = mostrarTodas ? vendas : vendas.slice(0, VENDAS_INICIAIS);
+    const ocultas = totalVendas > VENDAS_INICIAIS ? totalVendas - VENDAS_INICIAIS : 0;
+    const hasMais = !mostrarTodas && ocultas > 0;
+
+    const resumoTexto = filtrosAtivos
+        ? `Exibindo ${totalVendas} resultado(s) da pesquisa.`
+        : totalVendas > VENDAS_INICIAIS
+            ? `Mostrando ${VENDAS_INICIAIS} vendas mais recentes de ${totalVendas}. Clique em Mostrar mais para acessar as anteriores.`
+            : `Mostrando todas as ${totalVendas} vendas.`;
+
     const html = `
         <div class="card shadow-sm">
             <div class="card-header d-flex justify-content-between align-items-center">
@@ -89,6 +260,24 @@ function renderVendas(vendas) {
             </div>
 
             <div class="card-body">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-4">
+                        <input id="vendasBuscaNfce" type="text" class="form-control" placeholder="Buscar por NFC-e / Código" value="${termo || ''}" />
+                    </div>
+                    <div class="col-md-3">
+                        <input id="vendasBuscaDataDe" type="date" class="form-control" value="${dataDe || ''}" />
+                    </div>
+                    <div class="col-md-3">
+                        <input id="vendasBuscaDataAte" type="date" class="form-control" value="${dataAte || ''}" />
+                    </div>
+                    <div class="col-md-2 d-flex gap-2">
+                        <button class="btn btn-success w-100" onclick="aplicarFiltrosVendas()">Filtrar</button>
+                        <button class="btn btn-secondary w-100" onclick="limparFiltrosVendas()">Limpar</button>
+                    </div>
+                </div>
+
+                <div class="mb-2 text-muted small">${resumoTexto}</div>
+                ${renderResumoMensal(getVendasPorMes(vendas))}
                 <div class="table-responsive">
                     <table class="table table-striped table-hover align-middle">
                         <thead>
@@ -107,8 +296,8 @@ function renderVendas(vendas) {
                         </thead>
                         <tbody>
                             ${
-                                vendas.length > 0
-                                    ? vendas.map(v => `
+                                vendasVisiveis.length > 0
+                                    ? vendasVisiveis.map(v => `
                                         <tr>
                                             <td>${v.id}</td>
                                             <td>${v.codigo || '-'}</td>
@@ -146,6 +335,13 @@ function renderVendas(vendas) {
                         </tbody>
                     </table>
                 </div>
+                ${hasMais ? `
+                    <div class="d-flex justify-content-center mt-3">
+                        <button class="btn btn-outline-primary" onclick="toggleVendasMais()">
+                            Mostrar ${ocultas} vendas anteriores
+                        </button>
+                    </div>
+                ` : ''}
             </div>
         </div>
     `;
