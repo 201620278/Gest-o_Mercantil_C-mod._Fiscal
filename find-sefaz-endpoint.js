@@ -50,7 +50,7 @@ function findCertificate() {
     for (const url of urls) {
       try {
         const res = await new Promise((resolve, reject) => {
-          const req = https.get(url, { key, cert, rejectUnauthorized: false }, (res) => {
+          const req = https.get(url, { key, cert, rejectUnauthorized: true }, (res) => {
             resolve({ status: res.statusCode, headers: res.headers });
           });
           req.on('error', (err) => reject(err));

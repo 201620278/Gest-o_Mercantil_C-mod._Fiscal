@@ -4,7 +4,7 @@ const axios = require('axios');
 const certificadoService = require('./certificadoService');
 
 function criarAgent(certificado) {
-  const ca = fs.readFileSync('./certificados/icp-brasil-chain.pem');
+  const ca = fs.readFileSync('./backend/certificados/ICP-Brasilv5.crt');
 
   return new https.Agent({
     cert: certificado.pemCert,
@@ -67,7 +67,11 @@ function montarSoapConsultaRecibo(nRec) {
 
 async function consultarRecibo(nRec, ambiente, certificadoPath, certificadoSenha) {
   const urls = getUrls(ambiente);
-  const agent = criarHttpsAgent(certificadoPath, certificadoSenha);
+  const certificado = certificadoService.carregarCertificadoSalvo(
+    certificadoPath,
+    certificadoSenha
+  );
+  const agent = criarAgent(certificado);
   const soapXml = montarSoapConsultaRecibo(nRec);
 
   const response = await axios.post(urls.autorizacao, soapXml, {
