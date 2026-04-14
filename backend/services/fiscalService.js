@@ -853,8 +853,7 @@ async function emitirNfce(vendaId) {
         xmlEnviNFe: xmlAssinado,
         certificado: {
           caminho_pfx: path.resolve(empresa.certificado_path),
-          senha: empresa.certificado_senha,
-          caminho_ca: path.resolve('backend', 'certificados', 'ICP-Brasilv5-correto.pem')
+          senha: empresa.certificado_senha
         },
         configuracaoFiscal: {
           ambiente: notaFiscal.ambiente === 'producao' ? 1 : 2,

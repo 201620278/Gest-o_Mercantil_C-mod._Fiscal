@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const https = require('https');
 const axios = require('axios');
+const tls = require('tls');
 const { parseStringPromise } = require('xml2js');
 const certificadoService = require('../certificadoService');
 
@@ -13,67 +14,54 @@ function normalizarXml(xml = '') {
   return String(xml)
     .replace(/^\uFEFF/, '')
     .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .trim();
 }
 
-function escaparXmlSoap(valor = '') {
-  return String(valor)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;');
-}
-
-function extrairInnerNFeDoLote(xmlEnviNFe) {
+function extrairEnviNFe(xmlEnviNFe) {
   const xml = normalizarXml(xmlEnviNFe);
 
-  const match = xml.match(/<NFe\b[\s\S]*<\/NFe>/);
-
+  const match = xml.match(/<enviNFe\b[\s\S]*<\/enviNFe>/i);
   if (!match) {
-    throw new Error('Não foi possível extrair o bloco <NFe>...</NFe> do XML de envio.');
+    throw new Error('Não foi possível localizar o bloco <enviNFe>...</enviNFe> no XML.');
   }
 
   return match[0];
 }
 
-function montarSoapAutorizacao({ cUF, dadosXmlNFe }) {
-  const xmlEscapado = escaparXmlSoap(dadosXmlNFe);
-
+function montarSoapAutorizacao({ cUF, xmlEnviNFe }) {
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                  xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Header>
+    <nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+      <cUF>${cUF}</cUF>
+      <versaoDados>4.00</versaoDados>
+    </nfeCabecMsg>
+  </soap12:Header>
   <soap12:Body>
     <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
-      <nfeCabecMsg xmlns="">
-        <cUF>${cUF}</cUF>
-        <versaoDados>4.00</versaoDados>
-      </nfeCabecMsg>
-      <nfeDadosMsg xmlns="">
-        ${xmlEscapado}
-      </nfeDadosMsg>
+      ${xmlEnviNFe}
     </nfeDadosMsg>
   </soap12:Body>
 </soap12:Envelope>`;
 }
 
 function montarSoapRetAutorizacao({ cUF, xmlConsReciNFe }) {
-  const xmlEscapado = escaparXmlSoap(xmlConsReciNFe);
-
   return `<?xml version="1.0" encoding="utf-8"?>
 <soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
                  xmlns:xsd="http://www.w3.org/2001/XMLSchema"
                  xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Header>
+    <nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4">
+      <cUF>${cUF}</cUF>
+      <versaoDados>4.00</versaoDados>
+    </nfeCabecMsg>
+  </soap12:Header>
   <soap12:Body>
     <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4">
-      <nfeCabecMsg xmlns="">
-        <cUF>${cUF}</cUF>
-        <versaoDados>4.00</versaoDados>
-      </nfeCabecMsg>
-      <nfeDadosMsg xmlns="">
-        ${xmlEscapado}
-      </nfeDadosMsg>
+      ${xmlConsReciNFe}
     </nfeDadosMsg>
   </soap12:Body>
 </soap12:Envelope>`;
@@ -95,34 +83,42 @@ function obterEndpointsNfce(ambiente = 'homologacao') {
       };
 }
 
-function montarHttpsAgentComPem({
-  caminhoCertificado,
-  senhaCertificado,
-  caminhoCa
-}) {
+function montarHttpsAgent({ caminhoCertificado, senhaCertificado }) {
+  if (!caminhoCertificado) {
+    throw new Error('Caminho do certificado não informado.');
+  }
+
+  const caminhoResolvido = path.resolve(caminhoCertificado);
+
+  if (!fs.existsSync(caminhoResolvido)) {
+    throw new Error(`Certificado não encontrado: ${caminhoResolvido}`);
+  }
+
   const certInfo = certificadoService.carregarCertificadoSalvo(
-    caminhoCertificado,
+    caminhoResolvido,
     senhaCertificado
   );
 
-  const agentOptions = {
+  if (!certInfo.pemKey || !certInfo.pemCert) {
+    throw new Error('Não foi possível extrair PEM key/cert do certificado A1.');
+  }
+
+  return new https.Agent({
     key: certInfo.pemKey,
     cert: certInfo.pemCert,
+
+    // MUITO IMPORTANTE:
+    // não sobrescrever "ca" manualmente aqui.
+    // isso evita voltar o erro "unable to get local issuer certificate".
+
     minVersion: 'TLSv1.2',
     maxVersion: 'TLSv1.2',
     keepAlive: false,
+    rejectUnauthorized: true,
     honorCipherOrder: true,
-    rejectUnauthorized: true
-  };
-
-  if (caminhoCa) {
-    const caminhoCaResolvido = path.resolve(caminhoCa);
-    if (fs.existsSync(caminhoCaResolvido)) {
-      agentOptions.ca = fs.readFileSync(caminhoCaResolvido);
-    }
-  }
-
-  return new https.Agent(agentOptions);
+    servername: 'nfce-homologacao.svrs.rs.gov.br',
+    secureOptions: tls.constants?.SSL_OP_LEGACY_SERVER_CONNECT || 0
+  });
 }
 
 async function parseSoapRetorno(xml) {
@@ -143,6 +139,7 @@ async function parseSoapRetorno(xml) {
     body.nfeResultMsg ||
     body.nfeAutorizacaoLoteResult ||
     body.nfeAutorizacaoResult ||
+    body.nfeRetAutorizacaoResult ||
     body.retEnviNFe ||
     body.retConsReciNFe ||
     body;
@@ -150,22 +147,21 @@ async function parseSoapRetorno(xml) {
   return { bruto: xml, obj, ret };
 }
 
-function localizarRetornoNfe(ret) {
+function localizarRetorno(ret) {
   if (!ret) return null;
-
   if (ret.retEnviNFe) return ret.retEnviNFe;
   if (ret.retConsReciNFe) return ret.retConsReciNFe;
   return ret;
 }
 
 function extrairDadosRetorno(retornoParseado) {
-  const raiz = localizarRetornoNfe(retornoParseado?.ret) || {};
+  const raiz = localizarRetorno(retornoParseado?.ret) || {};
   const prot = raiz.protNFe?.infProt || {};
   const infRec = raiz.infRec || {};
 
   return {
-    cStat: String(prot.cStat || raiz.cStat || ''),
-    xMotivo: String(prot.xMotivo || raiz.xMotivo || ''),
+    codigo: String(prot.cStat || raiz.cStat || ''),
+    mensagem: String(prot.xMotivo || raiz.xMotivo || ''),
     recibo: String(infRec.nRec || raiz.nRec || ''),
     protocolo: String(prot.nProt || ''),
     dataAutorizacao: String(prot.dhRecbto || ''),
@@ -188,18 +184,15 @@ async function consultarRecibo({
   <nRec>${nRec}</nRec>
 </consReciNFe>`;
 
-  const envelope = montarSoapRetAutorizacao({
-    cUF,
-    xmlConsReciNFe
-  });
+  const soap = montarSoapRetAutorizacao({ cUF, xmlConsReciNFe });
 
-  const response = await axios.post(endpoints.retAutorizacao, envelope, {
+  const response = await axios.post(endpoints.retAutorizacao, soap, {
     httpsAgent,
     timeout,
     headers: {
       'Content-Type': 'application/soap+xml; charset=utf-8',
-      'Accept': 'application/soap+xml, text/xml, */*',
-      'Connection': 'close',
+      Accept: 'application/soap+xml, text/xml, */*',
+      Connection: 'close',
       'User-Agent': 'Mercadao-NFCe/1.0'
     },
     maxBodyLength: Infinity,
@@ -216,12 +209,17 @@ async function transmitirNfce({
   configuracaoFiscal,
   pastaDebug
 }) {
-  const caminhoCertificado = certificado?.caminho_pfx || certificado?.caminhoCertificado;
-  const senhaCertificado = certificado?.senha || certificado?.senhaCertificado;
-  const caminhoCa = certificado?.caminho_ca || certificado?.caminhoCa;
+  const caminhoCertificado =
+    certificado?.caminhoCertificado ||
+    certificado?.caminho_pfx ||
+    certificado?.caminho_p12;
+
+  const senhaCertificado =
+    certificado?.senhaCertificado ||
+    certificado?.senha;
 
   if (!caminhoCertificado) {
-    throw new Error('Caminho do certificado não informado.');
+    throw new Error('Certificado não configurado para transmissão.');
   }
 
   if (!senhaCertificado) {
@@ -232,14 +230,16 @@ async function transmitirNfce({
   const cUF = String(configuracaoFiscal?.uf_codigo || '23');
   const endpoints = obterEndpointsNfce(tpAmb === 2 ? 'homologacao' : 'producao');
 
-  const httpsAgent = montarHttpsAgentComPem({
+  const httpsAgent = montarHttpsAgent({
     caminhoCertificado,
-    senhaCertificado,
-    caminhoCa
+    senhaCertificado
   });
 
-  const xmlNFe = extrairInnerNFeDoLote(xmlEnviNFe);
-  const soap = montarSoapAutorizacao({ cUF, dadosXmlNFe: xmlNFe });
+  const xmlLote = extrairEnviNFe(xmlEnviNFe);
+  const soap = montarSoapAutorizacao({
+    cUF,
+    xmlEnviNFe: xmlLote
+  });
 
   if (pastaDebug) {
     fs.mkdirSync(pastaDebug, { recursive: true });
@@ -251,6 +251,7 @@ async function transmitirNfce({
   }
 
   let response;
+  let ultimoErro;
 
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
     try {
@@ -259,16 +260,19 @@ async function transmitirNfce({
         timeout: 60000,
         headers: {
           'Content-Type': 'application/soap+xml; charset=utf-8',
-          'Accept': 'application/soap+xml, text/xml, */*',
-          'Connection': 'close',
+          Accept: 'application/soap+xml, text/xml, */*',
+          Connection: 'close',
           'User-Agent': 'Mercadao-NFCe/1.0'
         },
         maxBodyLength: Infinity,
         maxContentLength: Infinity,
         validateStatus: status => status >= 200 && status < 500
       });
+
       break;
     } catch (error) {
+      ultimoErro = error;
+
       const ehErroRede =
         error.code === 'ECONNRESET' ||
         error.code === 'ETIMEDOUT' ||
@@ -283,6 +287,10 @@ async function transmitirNfce({
     }
   }
 
+  if (!response) {
+    throw ultimoErro || new Error('Falha ao obter resposta da SEFAZ.');
+  }
+
   const retornoAut = await parseSoapRetorno(response.data);
 
   if (pastaDebug) {
@@ -295,11 +303,11 @@ async function transmitirNfce({
 
   const dadosAut = extrairDadosRetorno(retornoAut);
 
-  if (dadosAut.cStat === '100' || dadosAut.cStat === '150') {
+  if (['100', '150'].includes(dadosAut.codigo)) {
     return {
       sucesso: true,
-      codigo: dadosAut.cStat,
-      mensagem: dadosAut.xMotivo,
+      codigo: dadosAut.codigo,
+      mensagem: dadosAut.mensagem,
       protocolo: dadosAut.protocolo || null,
       recibo: dadosAut.recibo || null,
       dataAutorizacao: dadosAut.dataAutorizacao || null,
@@ -307,22 +315,10 @@ async function transmitirNfce({
     };
   }
 
-  if (dadosAut.cStat === '104') {
-    return {
-      sucesso: ['100', '150'].includes(dadosAut.cStat),
-      codigo: dadosAut.cStat,
-      mensagem: dadosAut.xMotivo,
-      protocolo: dadosAut.protocolo || null,
-      recibo: dadosAut.recibo || null,
-      dataAutorizacao: dadosAut.dataAutorizacao || null,
-      xmlRetorno: retornoAut.bruto
-    };
-  }
-
-  if (dadosAut.cStat === '103' && dadosAut.recibo) {
+  if (dadosAut.codigo === '103' && dadosAut.recibo) {
     await delay(2500);
 
-    const retornoRecibo = await consultarRecibo({
+    const retornoRec = await consultarRecibo({
       cUF,
       tpAmb,
       nRec: dadosAut.recibo,
@@ -332,28 +328,28 @@ async function transmitirNfce({
     if (pastaDebug) {
       fs.writeFileSync(
         path.join(pastaDebug, `soap-retorno-recibo-${Date.now()}.xml`),
-        retornoRecibo.bruto,
+        retornoRec.bruto,
         'utf8'
       );
     }
 
-    const dadosRec = extrairDadosRetorno(retornoRecibo);
+    const dadosRec = extrairDadosRetorno(retornoRec);
 
     return {
-      sucesso: ['100', '150'].includes(dadosRec.cStat),
-      codigo: dadosRec.cStat,
-      mensagem: dadosRec.xMotivo,
+      sucesso: ['100', '150'].includes(dadosRec.codigo),
+      codigo: dadosRec.codigo,
+      mensagem: dadosRec.mensagem,
       protocolo: dadosRec.protocolo || null,
       recibo: dadosAut.recibo || null,
       dataAutorizacao: dadosRec.dataAutorizacao || null,
-      xmlRetorno: retornoRecibo.bruto
+      xmlRetorno: retornoRec.bruto
     };
   }
 
   return {
     sucesso: false,
-    codigo: dadosAut.cStat || '0',
-    mensagem: dadosAut.xMotivo || 'Retorno desconhecido da SEFAZ',
+    codigo: dadosAut.codigo || '0',
+    mensagem: dadosAut.mensagem || 'Retorno desconhecido da SEFAZ',
     protocolo: dadosAut.protocolo || null,
     recibo: dadosAut.recibo || null,
     dataAutorizacao: dadosAut.dataAutorizacao || null,
