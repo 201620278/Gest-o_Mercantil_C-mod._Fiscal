@@ -122,20 +122,25 @@ function gerarQrCodeNfce(chave, ambiente, empresa) {
   const idCSC = String(empresa.csc_id || empresa.CSC_ID || empresa.csc_id || '').trim();
   const tpAmb = ambiente === 'producao' ? '1' : '2';
 
-  if (!csc || !idCSC) {
-    throw new Error('CSC Token e CSC ID são obrigatórios para gerar o QR Code da NFC-e.');
+  if (!/^\d+$/.test(idCSC)) {
+    throw new Error('CSC ID inválido.');
   }
 
-  const parametroSemHash = `chNFe=${chave}&nVersao=100&tpAmb=${tpAmb}&cIdToken=${idCSC}`;
+  if (!csc) {
+    throw new Error('CSC Token não informado.');
+  }
 
+  const parametroSemHash = `${chave}|2|${tpAmb}|${idCSC}`;
   const hash = crypto
     .createHash('sha1')
     .update(parametroSemHash + csc, 'utf8')
     .digest('hex')
     .toUpperCase();
 
+  const qrCodeUrl = `${configUf.qrCode}?p=${parametroSemHash}|${hash}`;
+
   return {
-    qrCodeUrl: `${configUf.qrCode}?${parametroSemHash}&cHashQRCode=${hash}`,
+    qrCodeUrl,
     urlChave: configUf.consulta
   };
 }
@@ -539,18 +544,11 @@ function assinarXml(xml, empresa) {
     .replace(/>\s+</g, '><')
     .trim();
 
-  const temInfSupl = xmlNormalizado.includes('<infNFeSupl>');
-
   sig.computeSignature(xmlNormalizado, {
-    location: temInfSupl
-      ? {
-          reference: "//*[local-name(.)='infNFeSupl']",
-          action: 'after'
-        }
-      : {
-          reference: "//*[local-name(.)='infNFe']",
-          action: 'after'
-        }
+    location: {
+      reference: "//*[local-name(.)='infNFeSupl']",
+      action: 'after'
+    }
   });
 
   let xmlAssinado = sig.getSignedXml();
@@ -565,6 +563,10 @@ function assinarXml(xml, empresa) {
     .replace(/\r?\n|\r/g, '')
     .replace(/>\s+</g, '><')
     .trim();
+
+  if (!xmlAssinado.includes('<Signature')) {
+    throw new Error('Falha ao assinar XML: Signature não foi inserida.');
+  }
 
   return xmlAssinado;
 }
@@ -815,7 +817,14 @@ async function emitirNfce(vendaId) {
   const xmlPath = salvarXml(xmlComSupl, `nfce_venda_${vendaId}_n${numero}`);
 
   const xmlAssinado = assinarXml(xmlComSupl, empresa);
-  const xmlAssinadoPath = salvarXml(xmlAssinado, `nfce_venda_${vendaId}_n${numero}_assinado`);
+  const xmlAssinadoPath = salvarXml(
+    xmlAssinado,
+    `nfce_venda_${vendaId}_n${numero}_assinado`
+  );
+
+  console.log('XML BASE:', xmlBase);
+  console.log('XML COM SUPL:', xmlComSupl);
+  console.log('XML ASSINADO:', xmlAssinado);
 
   return new Promise((resolve, reject) => {
     db.run(`
@@ -837,6 +846,10 @@ async function emitirNfce(vendaId) {
       if (errInsert) return reject(errInsert);
 
       const notaFiscalId = this.lastID;
+
+      if (!xmlAssinado.includes('<Signature')) {
+        return reject(new Error('XML assinado inválido: Signature não encontrada antes da transmissão.'));
+      }
 
       sefazService.transmitirNfce(xmlAssinado, notaFiscal.ambiente, empresa.certificado_path, empresa.certificado_senha)
         .then((retorno) => {
