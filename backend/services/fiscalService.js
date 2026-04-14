@@ -1,10 +1,10 @@
 const fs = require('fs');
 const path = require('path');
 const db = require('../database');
-const sefazService = require('./sefazService');
 const { SignedXml } = require('xml-crypto');
 const certificadoService = require('./certificadoService');
 const fiscalConfigService = require('./fiscalConfigService');
+const { transmitirNfce } = require('./fiscal/transmitirNfce');
 
 const storageDir = path.join(__dirname, '..', 'storage');
 const xmlDir = path.join(storageDir, 'xml');
@@ -95,8 +95,6 @@ function gerarUrlConsultaNfce(ambiente, uf) {
 }
 
 function gerarQrCodeNfce(chave, ambiente, empresa) {
-  const crypto = require('crypto');
-
   const urls = {
     CE: {
       homologacao: {
@@ -118,26 +116,10 @@ function gerarQrCodeNfce(chave, ambiente, empresa) {
     throw new Error(`URLs da NFC-e não configuradas para UF ${empresa.uf}.`);
   }
 
-  const csc = String(empresa.csc_token || empresa.CSC || empresa.csc || '').trim();
-  const idCSC = String(empresa.csc_id || empresa.CSC_ID || empresa.csc_id || '').trim();
   const tpAmb = ambiente === 'producao' ? '1' : '2';
 
-  if (!/^\d+$/.test(idCSC)) {
-    throw new Error('CSC ID inválido.');
-  }
-
-  if (!csc) {
-    throw new Error('CSC Token não informado.');
-  }
-
-  const parametroSemHash = `${chave}|2|${tpAmb}|${idCSC}`;
-  const hash = crypto
-    .createHash('sha1')
-    .update(parametroSemHash + csc, 'utf8')
-    .digest('hex')
-    .toUpperCase();
-
-  const qrCodeUrl = `${configUf.qrCode}?p=${parametroSemHash}|${hash}`;
+  // QR-Code versão 3 - emissão on-line
+  const qrCodeUrl = `${configUf.qrCode}?p=${chave}|3|${tpAmb}`;
 
   return {
     qrCodeUrl,
@@ -148,7 +130,7 @@ function gerarQrCodeNfce(chave, ambiente, empresa) {
 function adicionarInfNFeSuplNoXml(xml, qrCodeUrl, urlChave) {
   const blocoSuplementar =
     `<infNFeSupl>` +
-      `<qrCode><![CDATA[${qrCodeUrl}]]></qrCode>` +
+      `<qrCode>${escapeXml(qrCodeUrl)}</qrCode>` +
       `<urlChave>${escapeXml(urlChave)}</urlChave>` +
     `</infNFeSupl>`;
 
@@ -808,6 +790,8 @@ async function emitirNfce(vendaId) {
     empresa
   );
 
+  console.log('QR CODE FINAL:', qrCodeData.qrCodeUrl);
+
   const xmlComSupl = adicionarInfNFeSuplNoXml(
     xmlBase,
     qrCodeData.qrCodeUrl,
@@ -851,7 +835,19 @@ async function emitirNfce(vendaId) {
         return reject(new Error('XML assinado inválido: Signature não encontrada antes da transmissão.'));
       }
 
-      sefazService.transmitirNfce(xmlAssinado, notaFiscal.ambiente, empresa.certificado_path, empresa.certificado_senha)
+      transmitirNfce({
+        xmlEnviNFe: xmlAssinado,
+        certificado: {
+          caminho_pfx: path.resolve(empresa.certificado_path),
+          senha: empresa.certificado_senha,
+          caminho_ca: path.resolve('backend', 'certificados', 'ICP-Brasilv5.pem')
+        },
+        configuracaoFiscal: {
+          ambiente: notaFiscal.ambiente === 'producao' ? 1 : 2,
+          uf_codigo: cUF
+        },
+        pastaDebug: path.resolve('backend', 'debug')
+      })
         .then((retorno) => {
           const statusFinal = ['100', '150'].includes(retorno.codigo)
             ? 'autorizado'
