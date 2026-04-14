@@ -88,6 +88,7 @@ function gerarUrlConsultaNfce(ambiente, uf) {
   };
 
   const ufUpper = String(uf || '').toUpperCase();
+
   return ambiente === 'producao'
     ? urls[ufUpper]?.producao || ''
     : urls[ufUpper]?.homologacao || '';
@@ -96,49 +97,67 @@ function gerarUrlConsultaNfce(ambiente, uf) {
 function gerarQrCodeNfce(chave, ambiente, empresa) {
   const crypto = require('crypto');
 
-  const urlConsulta = gerarUrlConsultaNfce(ambiente, empresa.uf);
-  const csc = String(empresa.csc_token || empresa.CSC || '').trim();
-  const idCSC = String(empresa.csc_id || empresa.CSC_ID || '').trim();
-  const tpAmb = ambiente === 'producao' ? '1' : '2';
-  const versao = '2';
+  const urls = {
+    CE: {
+      homologacao: {
+        consulta: 'http://nfceh.sefaz.ce.gov.br/pages/consultaNota.jsf',
+        qrCode: 'http://nfceh.sefaz.ce.gov.br/pages/ShowNFCe.html'
+      },
+      producao: {
+        consulta: 'http://nfce.sefaz.ce.gov.br/pages/consultaNota.jsf',
+        qrCode: 'http://nfce.sefaz.ce.gov.br/pages/ShowNFCe.html'
+      }
+    }
+  };
 
-  if (!urlConsulta) {
-    throw new Error(`URL de consulta NFC-e não configurada para UF ${empresa.uf}.`);
+  const ufUpper = String(empresa.uf || '').toUpperCase();
+  const ambienteKey = ambiente === 'producao' ? 'producao' : 'homologacao';
+  const configUf = urls[ufUpper]?.[ambienteKey];
+
+  if (!configUf) {
+    throw new Error(`URLs da NFC-e não configuradas para UF ${empresa.uf}.`);
   }
+
+  const csc = String(empresa.csc_token || empresa.CSC || empresa.csc || '').trim();
+  const idCSC = String(empresa.csc_id || empresa.CSC_ID || empresa.csc_id || '').trim();
+  const tpAmb = ambiente === 'producao' ? '1' : '2';
 
   if (!csc || !idCSC) {
     throw new Error('CSC Token e CSC ID são obrigatórios para gerar o QR Code da NFC-e.');
   }
 
-  const parametros =
-    `chNFe=${chave}` +
-    `&nVersao=${versao}` +
-    `&tpAmb=${tpAmb}` +
-    `&cIdToken=${idCSC}`;
+  const parametroSemHash = `chNFe=${chave}&nVersao=100&tpAmb=${tpAmb}&cIdToken=${idCSC}`;
 
   const hash = crypto
     .createHash('sha1')
-    .update(parametros + csc, 'utf8')
+    .update(parametroSemHash + csc, 'utf8')
     .digest('hex')
     .toUpperCase();
 
-  return `${urlConsulta}?${parametros}&cHashQRCode=${hash}`;
+  return {
+    qrCodeUrl: `${configUf.qrCode}?${parametroSemHash}&cHashQRCode=${hash}`,
+    urlChave: configUf.consulta
+  };
 }
 
-function inserirInfNFeSupl(xmlAssinado, qrCodeUrl, urlChave) {
-  const blocoSuplementar = `<infNFeSupl><qrCode>${escapeXml(qrCodeUrl)}</qrCode><urlChave>${escapeXml(urlChave)}</urlChave></infNFeSupl>`;
+function adicionarInfNFeSuplNoXml(xml, qrCodeUrl, urlChave) {
+  const blocoSuplementar =
+    `<infNFeSupl>` +
+      `<qrCode><![CDATA[${qrCodeUrl}]]></qrCode>` +
+      `<urlChave>${escapeXml(urlChave)}</urlChave>` +
+    `</infNFeSupl>`;
 
-  let xmlFinal;
+  const xmlFinal = String(xml || '')
+    .replace(/\r?\n|\r/g, '')
+    .replace(/>\s+</g, '><')
+    .trim()
+    .replace(/<\/infNFe>\s*<\/NFe>/i, `</infNFe>${blocoSuplementar}</NFe>`);
 
-  if (xmlAssinado.includes('</Signature></NFe>')) {
-    xmlFinal = xmlAssinado.replace('</Signature></NFe>', `</Signature>${blocoSuplementar}</NFe>`);
-  } else if (xmlAssinado.includes('</infNFe></NFe>')) {
-    xmlFinal = xmlAssinado.replace('</infNFe></NFe>', `</infNFe>${blocoSuplementar}</NFe>`);
-  } else {
-    throw new Error('Não foi possível inserir infNFeSupl no XML assinado.');
+  if (!xmlFinal.includes('<infNFeSupl>')) {
+    throw new Error('Não foi possível adicionar infNFeSupl no XML base.');
   }
 
-  return String(xmlFinal).replace(/>\s+</g, '><').trim();
+  return xmlFinal;
 }
 
 function normalizarFormaPagamento(forma) {
@@ -487,6 +506,10 @@ function assinarXml(xml, empresa) {
   const pemCert = certificado.pemCert;
   const certBase64 = limparPem(pemCert);
 
+  if (!pemKey) {
+    throw new Error('Chave privada do certificado não encontrada.');
+  }
+
   if (!certBase64) {
     throw new Error('Certificado inválido para assinatura: conteúdo X509 vazio.');
   }
@@ -511,11 +534,23 @@ function assinarXml(xml, empresa) {
     digestAlgorithm: 'http://www.w3.org/2000/09/xmldsig#sha1'
   });
 
-  sig.computeSignature(xml, {
-    location: {
-      reference: "//*[local-name(.)='infNFe']",
-      action: 'after'
-    }
+  const xmlNormalizado = String(xml || '')
+    .replace(/\r?\n|\r/g, '')
+    .replace(/>\s+</g, '><')
+    .trim();
+
+  const temInfSupl = xmlNormalizado.includes('<infNFeSupl>');
+
+  sig.computeSignature(xmlNormalizado, {
+    location: temInfSupl
+      ? {
+          reference: "//*[local-name(.)='infNFeSupl']",
+          action: 'after'
+        }
+      : {
+          reference: "//*[local-name(.)='infNFe']",
+          action: 'after'
+        }
   });
 
   let xmlAssinado = sig.getSignedXml();
@@ -526,7 +561,10 @@ function assinarXml(xml, empresa) {
       `<X509Certificate>${String(conteudo).replace(/\s+/g, '')}</X509Certificate>`
   );
 
-  xmlAssinado = xmlAssinado.replace(/>\s+</g, '><').trim();
+  xmlAssinado = String(xmlAssinado)
+    .replace(/\r?\n|\r/g, '')
+    .replace(/>\s+</g, '><')
+    .trim();
 
   return xmlAssinado;
 }
@@ -760,27 +798,23 @@ async function emitirNfce(vendaId) {
 
   const chaveAcesso = notaFiscal.chave_acesso;
   const loteId = String(Date.now()).padStart(15, '0').slice(-15);
-  const xml = montarXml(venda, notaFiscal, empresa, itens, cliente, loteId, 1);
-  const xmlPath = salvarXml(xml, `nfce_venda_${vendaId}_n${numero}`);
+  const xmlBase = montarXml(venda, notaFiscal, empresa, itens, cliente, loteId, 1);
 
-  const xmlAssinadoBase = assinarXml(xml, empresa);
-
-  const qrCodeUrl = gerarQrCodeNfce(
+  const qrCodeData = gerarQrCodeNfce(
     notaFiscal.chave_acesso,
     notaFiscal.ambiente,
     empresa
   );
 
-  const urlChave = gerarUrlConsultaNfce(
-    notaFiscal.ambiente,
-    empresa.uf
+  const xmlComSupl = adicionarInfNFeSuplNoXml(
+    xmlBase,
+    qrCodeData.qrCodeUrl,
+    qrCodeData.urlChave
   );
 
-  const xmlAssinado = inserirInfNFeSupl(
-    xmlAssinadoBase,
-    qrCodeUrl,
-    urlChave
-  );
+  const xmlPath = salvarXml(xmlComSupl, `nfce_venda_${vendaId}_n${numero}`);
+
+  const xmlAssinado = assinarXml(xmlComSupl, empresa);
   const xmlAssinadoPath = salvarXml(xmlAssinado, `nfce_venda_${vendaId}_n${numero}_assinado`);
 
   return new Promise((resolve, reject) => {
@@ -891,7 +925,7 @@ async function emitirNfce(vendaId) {
                   protocolo: retorno.protocolo || null,
                   data_autorizacao: dataAutorizacao,
                   motivo_retorno: retorno.mensagem || null,
-                  qr_code_url: retorno.qrCodeUrl || null,
+                  qr_code_url: qrCodeData.qrCodeUrl || null,
                   qr_code_base64: retorno.qrCodeBase64 || null,
                   message
                 });

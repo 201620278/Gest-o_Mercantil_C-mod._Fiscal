@@ -4,7 +4,7 @@ const db = require('../database');
 const backup = require('../backup');
 
 router.get('/backup', (req, res) => {
-  const config = backup.loadConfig();
+  const config = backup.loadConfigSync();
   res.json(config);
 });
 

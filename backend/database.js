@@ -624,7 +624,13 @@ function inserirConfiguracoesPadrao() {
     ['logo', '', 'text', 'URL da logo'],
     ['imprimir_cupom', 'true', 'boolean', 'Imprimir cupom fiscal'],
     ['juros_mora', '1.0', 'decimal', 'Juros de mora por dia (%)'],
-    ['ambiente_fiscal_ativo', 'homologacao', 'string', 'Ambiente fiscal ativo para emissão NFC-e']
+    ['ambiente_fiscal_ativo', 'homologacao', 'string', 'Ambiente fiscal ativo para emissão NFC-e'],
+    ['backup_google_enabled', 'false', 'boolean', 'Backup automático para Google Drive habilitado'],
+    ['backup_google_frequency', '0 2 * * *', 'string', 'Frequência de backup para Google Drive'],
+    ['backup_google_client_id', '', 'string', 'Google Client ID para backup'],
+    ['backup_google_client_secret', '', 'string', 'Google Client Secret para backup'],
+    ['backup_google_redirect_uris', '[]', 'text', 'Google Redirect URIs para OAuth'],
+    ['backup_google_refresh_token', '', 'text', 'Google Refresh Token para backup']
   ];
 
   configs.forEach(config => {
