@@ -3,6 +3,7 @@ const path = require('path');
 const https = require('https');
 const axios = require('axios');
 const { parseStringPromise } = require('xml2js');
+const certificadoService = require('../certificadoService');
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -28,6 +29,7 @@ function extrairInnerNFeDoLote(xmlEnviNFe) {
   const xml = normalizarXml(xmlEnviNFe);
 
   const match = xml.match(/<NFe\b[\s\S]*<\/NFe>/);
+
   if (!match) {
     throw new Error('Não foi possível extrair o bloco <NFe>...</NFe> do XML de envio.');
   }
@@ -56,6 +58,27 @@ function montarSoapAutorizacao({ cUF, dadosXmlNFe }) {
 </soap12:Envelope>`;
 }
 
+function montarSoapRetAutorizacao({ cUF, xmlConsReciNFe }) {
+  const xmlEscapado = escaparXmlSoap(xmlConsReciNFe);
+
+  return `<?xml version="1.0" encoding="utf-8"?>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Body>
+    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4">
+      <nfeCabecMsg xmlns="">
+        <cUF>${cUF}</cUF>
+        <versaoDados>4.00</versaoDados>
+      </nfeCabecMsg>
+      <nfeDadosMsg xmlns="">
+        ${xmlEscapado}
+      </nfeDadosMsg>
+    </nfeDadosMsg>
+  </soap12:Body>
+</soap12:Envelope>`;
+}
+
 function obterEndpointsNfce(ambiente = 'homologacao') {
   const ehHomologacao =
     String(ambiente).toLowerCase() === 'homologacao' ||
@@ -72,25 +95,19 @@ function obterEndpointsNfce(ambiente = 'homologacao') {
       };
 }
 
-function montarHttpsAgentSeguro({
+function montarHttpsAgentComPem({
   caminhoCertificado,
   senhaCertificado,
   caminhoCa
 }) {
-  if (!caminhoCertificado) {
-    throw new Error('Certificado não informado.');
-  }
-
-  const caminhoResolvido = path.resolve(caminhoCertificado);
-
-  if (!fs.existsSync(caminhoResolvido)) {
-    throw new Error(`Arquivo do certificado não encontrado: ${caminhoResolvido}`);
-  }
-
-  const ext = path.extname(caminhoResolvido).toLowerCase();
-  const bufferCert = fs.readFileSync(caminhoResolvido);
+  const certInfo = certificadoService.carregarCertificadoSalvo(
+    caminhoCertificado,
+    senhaCertificado
+  );
 
   const agentOptions = {
+    key: certInfo.pemKey,
+    cert: certInfo.pemCert,
     minVersion: 'TLSv1.2',
     maxVersion: 'TLSv1.2',
     keepAlive: false,
@@ -105,59 +122,7 @@ function montarHttpsAgentSeguro({
     }
   }
 
-  if (ext === '.pfx' || ext === '.p12') {
-    agentOptions.pfx = bufferCert;
-    agentOptions.passphrase = senhaCertificado || '';
-
-    try {
-      return new https.Agent(agentOptions);
-    } catch (error) {
-      if (
-        String(error.message || '').includes('Unsupported PKCS12 PFX data') ||
-        error.code === 'ERR_CRYPTO_UNSUPPORTED_OPERATION'
-      ) {
-        throw new Error(
-          'O arquivo informado como certificado PFX/P12 é inválido, está corrompido, está com senha errada ou não é realmente um PFX/P12. Verifique se o sistema está apontando para o certificado A1 da empresa (.pfx ou .p12), e não para um arquivo .pem.'
-        );
-      }
-      throw error;
-    }
-  }
-
-  if (ext === '.pem' || ext === '.crt' || ext === '.cer') {
-    throw new Error(
-      `Arquivo inválido para certificado do cliente: ${path.basename(caminhoResolvido)}. ` +
-      `Esse arquivo é ${ext} e não pode ser usado no campo PFX. ` +
-      `No campo do certificado da empresa use o arquivo A1 .pfx ou .p12. ` +
-      `O arquivo .pem deve ficar apenas no campo CA/cadeia, se necessário.`
-    );
-  }
-
-  throw new Error(
-    `Formato de certificado não suportado: ${ext}. Use um certificado A1 .pfx ou .p12.`
-  );
-}
-
-function validarCertificadoAntesDeTransmitir(configFiscal) {
-  const caminhoCert = path.resolve(configFiscal.certificado_caminho || '');
-  const ext = path.extname(caminhoCert).toLowerCase();
-
-  if (!configFiscal.certificado_caminho) {
-    throw new Error('Nenhum certificado foi configurado.');
-  }
-
-  if (!fs.existsSync(caminhoCert)) {
-    throw new Error(`Certificado não encontrado no caminho: ${caminhoCert}`);
-  }
-
-  if (ext !== '.pfx' && ext !== '.p12') {
-    throw new Error(
-      `Certificado inválido: ${path.basename(caminhoCert)}. ` +
-      `Para emissão NFC-e com certificado A1, informe um arquivo .pfx ou .p12.`
-    );
-  }
-
-  return caminhoCert;
+  return new https.Agent(agentOptions);
 }
 
 async function parseSoapRetorno(xml) {
@@ -171,7 +136,7 @@ async function parseSoapRetorno(xml) {
   const body = envelope?.Body || envelope?.body;
 
   if (!body) {
-    return { bruto: xml, obj };
+    return { bruto: xml, obj, ret: null };
   }
 
   const ret =
@@ -185,42 +150,27 @@ async function parseSoapRetorno(xml) {
   return { bruto: xml, obj, ret };
 }
 
-function extrairRecibo(retornoParseado) {
-  const ret = retornoParseado?.ret;
-
+function localizarRetornoNfe(ret) {
   if (!ret) return null;
 
-  if (ret.retEnviNFe?.infRec?.nRec) return ret.retEnviNFe.infRec.nRec;
-  if (ret.infRec?.nRec) return ret.infRec.nRec;
-  if (ret.nRec) return ret.nRec;
-
-  return null;
+  if (ret.retEnviNFe) return ret.retEnviNFe;
+  if (ret.retConsReciNFe) return ret.retConsReciNFe;
+  return ret;
 }
 
-function extrairCStat(retornoParseado) {
-  const ret = retornoParseado?.ret;
+function extrairDadosRetorno(retornoParseado) {
+  const raiz = localizarRetornoNfe(retornoParseado?.ret) || {};
+  const prot = raiz.protNFe?.infProt || {};
+  const infRec = raiz.infRec || {};
 
-  if (!ret) return null;
-
-  if (ret.retEnviNFe?.cStat) return ret.retEnviNFe.cStat;
-  if (ret.retConsReciNFe?.cStat) return ret.retConsReciNFe.cStat;
-  if (ret.protNFe?.infProt?.cStat) return ret.protNFe.infProt.cStat;
-  if (ret.cStat) return ret.cStat;
-
-  return null;
-}
-
-function extrairXMotivo(retornoParseado) {
-  const ret = retornoParseado?.ret;
-
-  if (!ret) return null;
-
-  if (ret.retEnviNFe?.xMotivo) return ret.retEnviNFe.xMotivo;
-  if (ret.retConsReciNFe?.xMotivo) return ret.retConsReciNFe.xMotivo;
-  if (ret.protNFe?.infProt?.xMotivo) return ret.protNFe.infProt.xMotivo;
-  if (ret.xMotivo) return ret.xMotivo;
-
-  return null;
+  return {
+    cStat: String(prot.cStat || raiz.cStat || ''),
+    xMotivo: String(prot.xMotivo || raiz.xMotivo || ''),
+    recibo: String(infRec.nRec || raiz.nRec || ''),
+    protocolo: String(prot.nProt || ''),
+    dataAutorizacao: String(prot.dhRecbto || ''),
+    digVal: String(prot.digVal || '')
+  };
 }
 
 async function consultarRecibo({
@@ -238,22 +188,10 @@ async function consultarRecibo({
   <nRec>${nRec}</nRec>
 </consReciNFe>`;
 
-  const envelope = `<?xml version="1.0" encoding="utf-8"?>
-<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
-  <soap12:Body>
-    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeRetAutorizacao4">
-      <nfeCabecMsg xmlns="">
-        <cUF>${cUF}</cUF>
-        <versaoDados>4.00</versaoDados>
-      </nfeCabecMsg>
-      <nfeDadosMsg xmlns="">
-        ${escaparXmlSoap(xmlConsReciNFe)}
-      </nfeDadosMsg>
-    </nfeDadosMsg>
-  </soap12:Body>
-</soap12:Envelope>`;
+  const envelope = montarSoapRetAutorizacao({
+    cUF,
+    xmlConsReciNFe
+  });
 
   const response = await axios.post(endpoints.retAutorizacao, envelope, {
     httpsAgent,
@@ -278,20 +216,26 @@ async function transmitirNfce({
   configuracaoFiscal,
   pastaDebug
 }) {
-  validarCertificadoAntesDeTransmitir({
-    certificado_caminho: certificado?.caminhoCertificado || certificado?.caminho_pfx || certificado?.caminho_pfx,
-    certificado_senha: certificado?.senha || certificado?.senhaCertificado
-  });
+  const caminhoCertificado = certificado?.caminho_pfx || certificado?.caminhoCertificado;
+  const senhaCertificado = certificado?.senha || certificado?.senhaCertificado;
+  const caminhoCa = certificado?.caminho_ca || certificado?.caminhoCa;
+
+  if (!caminhoCertificado) {
+    throw new Error('Caminho do certificado não informado.');
+  }
+
+  if (!senhaCertificado) {
+    throw new Error('Senha do certificado não informada.');
+  }
 
   const tpAmb = Number(configuracaoFiscal?.ambiente || 2);
   const cUF = String(configuracaoFiscal?.uf_codigo || '23');
-
   const endpoints = obterEndpointsNfce(tpAmb === 2 ? 'homologacao' : 'producao');
 
-  const httpsAgent = montarHttpsAgentSeguro({
-    caminhoCertificado: certificado?.caminhoCertificado || certificado?.caminho_pfx || certificado?.caminho_pfx,
-    senhaCertificado: certificado?.senhaCertificado || certificado?.senha,
-    caminhoCa: certificado?.caminhoCa || certificado?.caminho_ca || process.env.NODE_EXTRA_CA_CERTS
+  const httpsAgent = montarHttpsAgentComPem({
+    caminhoCertificado,
+    senhaCertificado,
+    caminhoCa
   });
 
   const xmlNFe = extrairInnerNFeDoLote(xmlEnviNFe);
@@ -307,7 +251,6 @@ async function transmitirNfce({
   }
 
   let response;
-  let ultimoErro;
 
   for (let tentativa = 1; tentativa <= 2; tentativa++) {
     try {
@@ -324,11 +267,8 @@ async function transmitirNfce({
         maxContentLength: Infinity,
         validateStatus: status => status >= 200 && status < 500
       });
-
       break;
     } catch (error) {
-      ultimoErro = error;
-
       const ehErroRede =
         error.code === 'ECONNRESET' ||
         error.code === 'ETIMEDOUT' ||
@@ -353,27 +293,39 @@ async function transmitirNfce({
     );
   }
 
-  const cStat = extrairCStat(retornoAut);
-  const xMotivo = extrairXMotivo(retornoAut);
-  const nRec = extrairRecibo(retornoAut);
+  const dadosAut = extrairDadosRetorno(retornoAut);
 
-  if (String(cStat) === '104' || String(cStat) === '100' || String(cStat) === '150') {
+  if (dadosAut.cStat === '100' || dadosAut.cStat === '150') {
     return {
       sucesso: true,
-      fase: 'autorizado',
-      cStat,
-      xMotivo,
-      retorno: retornoAut
+      codigo: dadosAut.cStat,
+      mensagem: dadosAut.xMotivo,
+      protocolo: dadosAut.protocolo || null,
+      recibo: dadosAut.recibo || null,
+      dataAutorizacao: dadosAut.dataAutorizacao || null,
+      xmlRetorno: retornoAut.bruto
     };
   }
 
-  if (String(cStat) === '103' && nRec) {
+  if (dadosAut.cStat === '104') {
+    return {
+      sucesso: ['100', '150'].includes(dadosAut.cStat),
+      codigo: dadosAut.cStat,
+      mensagem: dadosAut.xMotivo,
+      protocolo: dadosAut.protocolo || null,
+      recibo: dadosAut.recibo || null,
+      dataAutorizacao: dadosAut.dataAutorizacao || null,
+      xmlRetorno: retornoAut.bruto
+    };
+  }
+
+  if (dadosAut.cStat === '103' && dadosAut.recibo) {
     await delay(2500);
 
     const retornoRecibo = await consultarRecibo({
       cUF,
       tpAmb,
-      nRec,
+      nRec: dadosAut.recibo,
       httpsAgent
     });
 
@@ -385,25 +337,27 @@ async function transmitirNfce({
       );
     }
 
-    const cStatRec = extrairCStat(retornoRecibo);
-    const xMotivoRec = extrairXMotivo(retornoRecibo);
+    const dadosRec = extrairDadosRetorno(retornoRecibo);
 
     return {
-      sucesso: ['100', '104', '150'].includes(String(cStatRec)),
-      fase: 'recibo',
-      recibo: nRec,
-      cStat: cStatRec,
-      xMotivo: xMotivoRec,
-      retorno: retornoRecibo
+      sucesso: ['100', '150'].includes(dadosRec.cStat),
+      codigo: dadosRec.cStat,
+      mensagem: dadosRec.xMotivo,
+      protocolo: dadosRec.protocolo || null,
+      recibo: dadosAut.recibo || null,
+      dataAutorizacao: dadosRec.dataAutorizacao || null,
+      xmlRetorno: retornoRecibo.bruto
     };
   }
 
   return {
     sucesso: false,
-    fase: 'autorizacao',
-    cStat,
-    xMotivo,
-    retorno: retornoAut
+    codigo: dadosAut.cStat || '0',
+    mensagem: dadosAut.xMotivo || 'Retorno desconhecido da SEFAZ',
+    protocolo: dadosAut.protocolo || null,
+    recibo: dadosAut.recibo || null,
+    dataAutorizacao: dadosAut.dataAutorizacao || null,
+    xmlRetorno: retornoAut.bruto
   };
 }
 

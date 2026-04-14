@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const db = require('../database');
 const { SignedXml } = require('xml-crypto');
 const certificadoService = require('./certificadoService');
@@ -98,12 +99,12 @@ function gerarQrCodeNfce(chave, ambiente, empresa) {
   const urls = {
     CE: {
       homologacao: {
-        consulta: 'http://nfceh.sefaz.ce.gov.br/pages/consultaNota.jsf',
-        qrCode: 'http://nfceh.sefaz.ce.gov.br/pages/ShowNFCe.html'
+        consulta: 'https://nfceh.sefaz.ce.gov.br/pages/consultaNota.jsf',
+        qrCode: 'https://nfceh.sefaz.ce.gov.br/pages/ShowNFCe.html'
       },
       producao: {
-        consulta: 'http://nfce.sefaz.ce.gov.br/pages/consultaNota.jsf',
-        qrCode: 'http://nfce.sefaz.ce.gov.br/pages/ShowNFCe.html'
+        consulta: 'https://nfce.sefaz.ce.gov.br/pages/consultaNota.jsf',
+        qrCode: 'https://nfce.sefaz.ce.gov.br/pages/ShowNFCe.html'
       }
     }
   };
@@ -117,9 +118,22 @@ function gerarQrCodeNfce(chave, ambiente, empresa) {
   }
 
   const tpAmb = ambiente === 'producao' ? '1' : '2';
+  const cscId = String(empresa.csc_id || empresa.CSC_ID || '').trim();
+  const csc = String(empresa.csc_token || empresa.CSC || '').trim();
 
-  // QR-Code versão 3 - emissão on-line
-  const qrCodeUrl = `${configUf.qrCode}?p=${chave}|3|${tpAmb}`;
+  if (!cscId || !csc) {
+    throw new Error('CSC Token e CSC ID são obrigatórios para gerar o QR Code.');
+  }
+
+  const versaoQrCode = '3';
+  const paramSemHash = `${chave}|${versaoQrCode}|${tpAmb}|${cscId}`;
+  const hash = crypto
+    .createHash('sha1')
+    .update(paramSemHash + csc, 'utf8')
+    .digest('hex')
+    .toUpperCase();
+
+  const qrCodeUrl = `${configUf.qrCode}?p=${paramSemHash}|${hash}`;
 
   return {
     qrCodeUrl,
@@ -504,7 +518,7 @@ function assinarXml(xml, empresa) {
   const sig = new SignedXml({
     privateKey: pemKey,
     canonicalizationAlgorithm: 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315',
-    signatureAlgorithm: 'http://www.w3.org/2000/09/xmldsig#rsa-sha1'
+    signatureAlgorithm: 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256'
   });
 
   sig.getKeyInfoContent = () =>
@@ -518,7 +532,7 @@ function assinarXml(xml, empresa) {
       'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
       'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
     ],
-    digestAlgorithm: 'http://www.w3.org/2000/09/xmldsig#sha1'
+    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256'
   });
 
   const xmlNormalizado = String(xml || '')
@@ -840,7 +854,7 @@ async function emitirNfce(vendaId) {
         certificado: {
           caminho_pfx: path.resolve(empresa.certificado_path),
           senha: empresa.certificado_senha,
-          caminho_ca: path.resolve('backend', 'certificados', 'ICP-Brasilv5.pem')
+          caminho_ca: path.resolve('backend', 'certificados', 'ICP-Brasilv5-correto.pem')
         },
         configuracaoFiscal: {
           ambiente: notaFiscal.ambiente === 'producao' ? 1 : 2,
@@ -849,13 +863,18 @@ async function emitirNfce(vendaId) {
         pastaDebug: path.resolve('backend', 'debug')
       })
         .then((retorno) => {
-          const statusFinal = ['100', '150'].includes(retorno.codigo)
+          const codigo = String(retorno.codigo || '');
+          const mensagem = retorno.mensagem || 'Retorno desconhecido da SEFAZ';
+
+          const statusFinal = ['100', '150'].includes(codigo)
             ? 'autorizado'
-            : ['103', '105'].includes(retorno.codigo)
+            : ['103', '105'].includes(codigo)
               ? 'processando'
               : 'rejeitado';
+
           const nfceEmitida = statusFinal === 'autorizado' ? 1 : 0;
           const dataAutorizacao = retorno.dataAutorizacao || formatarDataHoraBrasil();
+
           const retornoXmlPath = salvarXml(
             retorno.xmlRetorno || '<retorno/>',
             `nfce_venda_${vendaId}_n${numero}_retorno`
@@ -875,7 +894,7 @@ async function emitirNfce(vendaId) {
             statusFinal,
             retorno.protocolo || null,
             retorno.recibo || null,
-            retorno.mensagem || null,
+            mensagem,
             dataAutorizacao,
             notaFiscalId
           ], (errUpdateNota) => {
@@ -900,7 +919,7 @@ async function emitirNfce(vendaId) {
                 notaFiscalId,
                 'transmissao',
                 retorno.protocolo || null,
-                retorno.mensagem || null,
+                mensagem,
                 retorno,
                 retornoXmlPath
               );
@@ -914,12 +933,11 @@ async function emitirNfce(vendaId) {
               `, [numero + 1, empresa.id], (errUpdateEmpresa) => {
                 if (errUpdateEmpresa) return reject(errUpdateEmpresa);
 
-                const motivoRetorno = retorno.mensagem || retorno.codigo || 'Retorno desconhecido';
                 const message = statusFinal === 'autorizado'
                   ? 'NFC-e autorizada pela SEFAZ.'
                   : statusFinal === 'processando'
-                    ? `NFC-e em processamento pela SEFAZ: ${motivoRetorno}`
-                    : `NFC-e rejeitada pela SEFAZ: ${motivoRetorno}`;
+                    ? `NFC-e em processamento pela SEFAZ: ${mensagem}`
+                    : `NFC-e rejeitada pela SEFAZ: ${mensagem}`;
 
                 resolve({
                   nota_fiscal_id: notaFiscalId,
@@ -933,9 +951,9 @@ async function emitirNfce(vendaId) {
                   status: statusFinal,
                   protocolo: retorno.protocolo || null,
                   data_autorizacao: dataAutorizacao,
-                  motivo_retorno: retorno.mensagem || null,
+                  motivo_retorno: mensagem,
                   qr_code_url: qrCodeData.qrCodeUrl || null,
-                  qr_code_base64: retorno.qrCodeBase64 || null,
+                  qr_code_base64: null,
                   message
                 });
               });
