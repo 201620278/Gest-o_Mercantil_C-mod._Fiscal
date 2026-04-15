@@ -1,10 +1,22 @@
-const { formatNumber, gerarChaveAcesso, gerarCodigoNumerico, nowDhEmi, onlyDigits, padLeft, round2, sha1Hex, xmlEscape } = require('./utils');
+const {
+  formatNumber,
+  gerarChaveAcesso,
+  gerarCodigoNumerico,
+  nowDhEmi,
+  onlyDigits,
+  padLeft,
+  round2,
+  sha1Hex,
+  xmlEscape
+} = require('./utils');
 
 function splitEnderecoLivre(endereco) {
   const texto = String(endereco || '').trim();
+
   if (!texto) {
     return { xLgr: '', nro: 'S/N', xBairro: '', cMun: '', xMun: '', UF: '', CEP: '' };
   }
+
   const partes = texto.split(',');
   return {
     xLgr: (partes[0] || '').trim(),
@@ -15,6 +27,7 @@ function splitEnderecoLivre(endereco) {
 
 function gerarQrCodeUrl({ consultaUrl, chave, versaoQrCode = '2', tpAmb, idCSC, tokenCSC, dhEmi, vNF, digestValueHex }) {
   if (!consultaUrl || !idCSC || !tokenCSC) return '';
+
   const params = [
     `chNFe=${chave}`,
     `nVersao=${versaoQrCode}`,
@@ -35,6 +48,7 @@ function buildNfceXml({ config, venda, itens, numero }) {
   const dhEmi = nowDhEmi();
   const aamm = dhEmi.slice(2, 4) + dhEmi.slice(5, 7);
   const cNF = gerarCodigoNumerico();
+
   const chave = gerarChaveAcesso({
     uf: config.codigoUf,
     aamm,
@@ -68,10 +82,12 @@ function buildNfceXml({ config, venda, itens, numero }) {
     }
   };
 
-  const infAdFisco = config.ambiente === 2 ? 'EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL' : '';
+  const infAdFisco = config.ambiente === 2
+    ? 'EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL'
+    : '';
 
   let vProd = 0;
-  let vDesc = round2(venda.desconto || 0);
+  const vDesc = round2(venda.desconto || 0);
   let vNF = 0;
 
   const dets = (itens || []).map((item, idx) => {
@@ -214,6 +230,7 @@ function buildNfceXml({ config, venda, itens, numero }) {
 </NFe>`;
 
   const digestValueHex = sha1Hex(chave).toUpperCase();
+
   const qrCodeUrl = gerarQrCodeUrl({
     consultaUrl: config.urls.consultaQr,
     chave,
@@ -244,6 +261,7 @@ function mapearFormaPagamento(forma) {
     cartao_debito: '04',
     prazo: '99'
   };
+
   return mapa[forma] || '99';
 }
 

@@ -1,4 +1,6 @@
 const axios = require('axios');
+const https = require('https');
+const { carregarCertificadoPfx } = require('./certificateService');
 
 function montarLote(xmlAssinado, idLote = '1') {
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -22,7 +24,25 @@ function montarSoapEnvelop(loteXml) {
 </soap12:Envelope>`;
 }
 
-async function enviarLote({ url, loteXml }) {
+function criarHttpsAgentSefaz({ certificadoPath, certificadoSenha }) {
+  if (!certificadoPath) {
+    throw new Error('Certificado não configurado.');
+  }
+
+  const certificado = carregarCertificadoPfx(certificadoPath, certificadoSenha);
+
+  console.log('USANDO CERTIFICADO:', certificadoPath);
+
+  return new https.Agent({
+    key: certificado.privateKeyPem,
+    cert: certificado.certPem,
+    rejectUnauthorized: false,
+    minVersion: 'TLSv1.2',
+    keepAlive: false
+  });
+}
+
+async function enviarLote({ url, loteXml, certificadoPath, certificadoSenha }) {
   if (!url) {
     return {
       success: false,
@@ -34,11 +54,28 @@ async function enviarLote({ url, loteXml }) {
   const envelope = montarSoapEnvelop(loteXml);
 
   try {
+    const httpsAgent = criarHttpsAgentSefaz({
+      certificadoPath,
+      certificadoSenha
+    });
+
+    console.log('Enviando para SEFAZ URL:', url);
+
     const response = await axios.post(url, envelope, {
-      headers: {
-        'Content-Type': 'application/soap+xml; charset=utf-8'
+      httpsAgent,
+      proxy: false,
+      timeout: 30000,
+      responseType: 'text',
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity,
+      transitional: {
+        forcedJSONParsing: false
       },
-      timeout: 30000
+      headers: {
+        'Content-Type': 'application/soap+xml; charset=utf-8',
+        'Accept': 'application/soap+xml, text/xml, */*',
+        'User-Agent': 'CDGESTAO-NFCE/1.0'
+      }
     });
 
     return {
@@ -47,15 +84,21 @@ async function enviarLote({ url, loteXml }) {
       raw: response.data
     };
   } catch (error) {
+    console.error('ERRO REAL SEFAZ:', error.message);
+    console.error('ERRO CODE:', error.code || null);
+    console.error('ERRO RESPONSE:', error.response?.data || null);
+
     return {
       success: false,
       status: 'erro_transmissao',
-      message: error.response?.data || error.message
+      message: error.response?.data || error.message || String(error),
+      code: error.code || null
     };
   }
 }
 
 module.exports = {
   montarLote,
+  montarSoapEnvelop,
   enviarLote
 };

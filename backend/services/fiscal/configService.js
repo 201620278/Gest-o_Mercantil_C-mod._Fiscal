@@ -3,15 +3,18 @@ const db = require('../../database');
 function getConfiguracoes(chaves) {
   return new Promise((resolve, reject) => {
     const placeholders = chaves.map(() => '?').join(',');
+
     db.all(
       `SELECT chave, valor FROM configuracoes WHERE chave IN (${placeholders})`,
       chaves,
       (err, rows) => {
         if (err) return reject(err);
+
         const map = {};
         rows.forEach((row) => {
           map[row.chave] = row.valor;
         });
+
         resolve(map);
       }
     );
@@ -94,7 +97,11 @@ function setConfiguracao(chave, valor, tipo = 'string', descricao = '') {
     db.run(`
       INSERT INTO configuracoes (chave, valor, tipo, descricao, updated_at)
       VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-      ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor, tipo = excluded.tipo, descricao = excluded.descricao, updated_at = CURRENT_TIMESTAMP
+      ON CONFLICT(chave) DO UPDATE SET
+        valor = excluded.valor,
+        tipo = excluded.tipo,
+        descricao = excluded.descricao,
+        updated_at = CURRENT_TIMESTAMP
     `, [chave, valor, tipo, descricao], (err) => {
       if (err) return reject(err);
       resolve();
@@ -106,6 +113,7 @@ async function incrementaNumeroFiscal() {
   const atual = await getConfiguracoes(['fiscal_numero_atual']);
   const numeroAtual = Number(atual.fiscal_numero_atual || 1);
   const proximo = numeroAtual + 1;
+
   await setConfiguracao('fiscal_numero_atual', String(proximo), 'number', 'Próximo número da NFC-e');
   return numeroAtual;
 }

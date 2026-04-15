@@ -16,9 +16,18 @@ function carregarVenda(vendaId) {
     `, [vendaId], (err, venda) => {
       if (err) return reject(err);
       if (!venda) return reject(new Error('Venda não encontrada.'));
+
       db.all(`
-        SELECT vi.*, p.nome as produto_nome, p.ncm as produto_ncm, p.cfop, p.csosn, p.origem, p.cest as produto_cest,
-               p.codigo_barras as produto_codigo_barras, p.unidade
+        SELECT
+          vi.*,
+          p.nome as produto_nome,
+          p.ncm as produto_ncm,
+          p.cfop,
+          p.csosn,
+          p.origem,
+          p.cest as produto_cest,
+          p.codigo_barras as produto_codigo_barras,
+          p.unidade
         FROM vendas_itens vi
         INNER JOIN produtos p ON p.id = vi.produto_id
         WHERE vi.venda_id = ?
@@ -63,10 +72,18 @@ async function emitirPorVendaId(vendaId) {
   const { venda, itens } = await carregarVenda(vendaId);
 
   const existe = await new Promise((resolve, reject) => {
-    db.get('SELECT * FROM nfce_notas WHERE venda_id = ? AND status IN ("autorizada","pendente","soap_enviado","configuracao_pendente") ORDER BY id DESC LIMIT 1', [vendaId], (err, row) => {
-      if (err) return reject(err);
-      resolve(row || null);
-    });
+    db.get(
+      `SELECT * FROM nfce_notas
+       WHERE venda_id = ?
+         AND status IN ("autorizada","pendente","soap_enviado","configuracao_pendente")
+       ORDER BY id DESC
+       LIMIT 1`,
+      [vendaId],
+      (err, row) => {
+        if (err) return reject(err);
+        resolve(row || null);
+      }
+    );
   });
 
   if (existe) {
@@ -102,6 +119,25 @@ async function emitirPorVendaId(vendaId) {
     };
   }
 
+  if (!config.certificadoPath) {
+    const notaId = await salvarNota({
+      venda_id: vendaId,
+      numero,
+      serie: config.serie,
+      chave_acesso: '',
+      ambiente: config.ambiente,
+      status: 'configuracao_pendente',
+      xml_retorno: 'Informe o caminho do certificado A1/PFX nas configurações fiscais.'
+    });
+
+    return {
+      success: false,
+      notaId,
+      status: 'configuracao_pendente',
+      message: 'Certificado A1/PFX não configurado.'
+    };
+  }
+
   const xmlBase = buildNfceXml({ config, venda, itens, numero });
   let xmlAssinado = xmlBase.xmlSemAssinatura;
   let assinaturaErro = null;
@@ -133,12 +169,30 @@ async function emitirPorVendaId(vendaId) {
 
   if (!assinaturaErro) {
     const loteXml = montarLote(xmlAssinado, String(numero));
+
     soapResponse = await enviarLote({
       url: config.urls.autorizacao,
-      loteXml
+      loteXml,
+      certificadoPath: config.certificadoPath,
+      certificadoSenha: config.certificadoSenha
     });
-    status = soapResponse.status || 'pendente';
-    xmlRetorno = soapResponse.raw || soapResponse.message || null;
+
+    const raw = String(soapResponse.raw || soapResponse.message || '');
+
+    if (raw.includes('<cStat>100</cStat>')) {
+      status = 'autorizada';
+
+      const protMatch = raw.match(/<nProt>(.*?)<\/nProt>/);
+      if (protMatch) {
+        soapResponse.protocolo = protMatch[1];
+      }
+    } else if (raw.includes('<cStat>') || /rejeic/i.test(raw)) {
+      status = 'rejeitada';
+    } else {
+      status = soapResponse.status || 'pendente';
+    }
+
+    xmlRetorno = raw || null;
   }
 
   const notaId = await salvarNota({
@@ -150,6 +204,7 @@ async function emitirPorVendaId(vendaId) {
     status,
     xml_enviado: xmlAssinado,
     xml_retorno: xmlRetorno,
+    protocolo: soapResponse?.protocolo || null,
     qr_code_url: xmlBase.qrCodeUrl,
     danfe_html: danfeHtml
   });

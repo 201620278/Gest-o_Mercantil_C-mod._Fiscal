@@ -2,10 +2,14 @@ const { SignedXml } = require('xml-crypto');
 
 function assinarXmlNfe(xml, certificado) {
   const sig = new SignedXml();
+
   sig.privateKey = certificado.privateKeyPem;
   sig.signatureAlgorithm = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
   sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
-  sig.getKeyInfoContent = () => `<X509Data><X509Certificate>${certificado.certBase64}</X509Certificate></X509Data>`;
+
+  sig.getKeyInfoContent = () =>
+    `<X509Data><X509Certificate>${certificado.certBase64}</X509Certificate></X509Data>`;
+
   sig.getCertFromKeyInfo = () => null;
 
   sig.addReference({

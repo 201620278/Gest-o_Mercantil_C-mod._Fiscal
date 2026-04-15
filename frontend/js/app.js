@@ -87,10 +87,16 @@ function formatDate(date) {
     return Number.isNaN(d.getTime()) ? date : d.toLocaleDateString('pt-BR');
 }
 
-function formatDateTime(date) {
-    if (!date) return '';
-    const d = new Date(date);
-    return Number.isNaN(d.getTime()) ? date : d.toLocaleString('pt-BR');
+function formatDateTime(dateString) {
+    if (!dateString) return '-';
+
+    const data = new Date(dateString);
+
+    return Number.isNaN(data.getTime())
+        ? dateString
+        : data.toLocaleString('pt-BR', {
+            timeZone: 'America/Fortaleza'
+        });
 }
 
 function showNotification(message, type = 'success') {

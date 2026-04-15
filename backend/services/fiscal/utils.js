@@ -25,7 +25,17 @@ function todayYMD() {
 }
 
 function nowDhEmi() {
-  return new Date().toISOString();
+  const agora = new Date();
+
+  const ano = agora.getFullYear();
+  const mes = String(agora.getMonth() + 1).padStart(2, '0');
+  const dia = String(agora.getDate()).padStart(2, '0');
+  const hora = String(agora.getHours()).padStart(2, '0');
+  const minuto = String(agora.getMinutes()).padStart(2, '0');
+  const segundo = String(agora.getSeconds()).padStart(2, '0');
+
+  // Brasil UTC-03:00
+  return `${ano}-${mes}-${dia}T${hora}:${minuto}:${segundo}-03:00`;
 }
 
 // Módulo 11 da chave NF-e/NFC-e
