@@ -1,7 +1,41 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../database');
+const { emitirPorVendaId } = require('../services/fiscal/emissor');
 const moment = require('moment');
+
+function responderVendaComFiscal(res, payload) {
+  if (!payload.emitirFiscal || !payload.vendaId) {
+    return res.json({
+      id: payload.vendaId,
+      codigo: payload.codigo,
+      message: payload.message
+    });
+  }
+
+  emitirPorVendaId(payload.vendaId)
+    .then((fiscal) => {
+      res.json({
+        id: payload.vendaId,
+        codigo: payload.codigo,
+        message: payload.message,
+        fiscal
+      });
+    })
+    .catch((error) => {
+      console.error('Erro ao emitir NFC-e após venda:', error);
+      res.json({
+        id: payload.vendaId,
+        codigo: payload.codigo,
+        message: payload.message,
+        fiscal: {
+          success: false,
+          status: 'erro_emissao',
+          message: error.message
+        }
+      });
+    });
+}
 
 // Listar todas as vendas
 router.get('/', (req, res) => {
@@ -16,29 +50,12 @@ router.get('/', (req, res) => {
       v.desconto,
       v.forma_pagamento,
       v.status,
-      v.nfce_emitida,
-      v.status_fiscal,
-      v.chave_nfce,
       c.nome AS cliente_nome,
       (
         SELECT COUNT(*)
         FROM vendas_itens vi
         WHERE vi.venda_id = v.id
-      ) AS total_itens,
-      (
-        SELECT nf.numero
-        FROM notas_fiscais nf
-        WHERE nf.venda_id = v.id
-        ORDER BY nf.id DESC
-        LIMIT 1
-      ) AS numero_nfce,
-      (
-        SELECT nf.status
-        FROM notas_fiscais nf
-        WHERE nf.venda_id = v.id
-        ORDER BY nf.id DESC
-        LIMIT 1
-      ) AS nfce_status
+      ) AS total_itens
     FROM vendas v
     LEFT JOIN clientes c ON c.id = v.cliente_id
     ORDER BY datetime(v.created_at) DESC, v.id DESC
@@ -87,7 +104,7 @@ router.get('/:id', (req, res) => {
 
 // NOVA LÓGICA: Suporte a venda a prazo
 router.post('/', (req, res) => {
-  const { cliente_id, total, desconto, forma_pagamento, itens, parcelas, primeiro_vencimento, forcar } = req.body;
+  const { cliente_id, total, desconto, forma_pagamento, itens, parcelas, primeiro_vencimento, forcar, emitir_fiscal } = req.body;
   const totalNum = Number(total);
 
   if (!itens || !Array.isArray(itens) || itens.length === 0) {
@@ -99,8 +116,6 @@ router.post('/', (req, res) => {
     return;
   }
 
-  // Validar apenas se os produtos existem.
-  // A validação fiscal deve ocorrer somente quando o operador optar por emitir NFC-e.
   const produtoIds = Array.from(new Set(itens.map(item => item.produto_id).filter(id => id !== undefined && id !== null)));
 
   if (itens.some(item => item.produto_id === undefined || item.produto_id === null)) {
@@ -222,7 +237,12 @@ router.post('/', (req, res) => {
                   const inserirFinanceiroPrazo = (indice = 1, venc = moment(primeiro_vencimento, 'YYYY-MM-DD')) => {
                     if (indice > qtdParcelas) {
                       db.run('COMMIT');
-                      res.json({ id: vendaId, codigo, message: 'Venda a prazo registrada com sucesso' });
+                      responderVendaComFiscal(res, {
+                        vendaId,
+                        codigo,
+                        message: 'Venda a prazo registrada com sucesso',
+                        emitirFiscal: !!emitir_fiscal
+                      });
                       return;
                     }
                     db.run(`
@@ -328,8 +348,32 @@ router.post('/', (req, res) => {
                     res.status(500).json({ error: finErr.message });
                     return;
                   }
-                  db.run('COMMIT');
-                  res.json({ id: vendaId, codigo, message: 'Venda registrada com sucesso' });
+                  const finalizarResposta = () => {
+                    db.run('COMMIT');
+                    responderVendaComFiscal(res, {
+                      vendaId,
+                      codigo,
+                      message: 'Venda registrada com sucesso',
+                      emitirFiscal: !!emitir_fiscal
+                    });
+                  };
+
+                  if (forma_pagamento === 'credito' && cliente_id) {
+                    db.run(`
+                      UPDATE clientes
+                      SET credito_atual = COALESCE(credito_atual, 0) + ?
+                      WHERE id = ?
+                    `, [totalNum, cliente_id], (credErr) => {
+                      if (credErr) {
+                        db.run('ROLLBACK');
+                        res.status(500).json({ error: credErr.message });
+                        return;
+                      }
+                      finalizarResposta();
+                    });
+                  } else {
+                    finalizarResposta();
+                  }
                 });
               }
             });
@@ -372,7 +416,6 @@ router.post('/', (req, res) => {
     executarVenda();
   }
 });
-
 });
 
 // Cancelar venda

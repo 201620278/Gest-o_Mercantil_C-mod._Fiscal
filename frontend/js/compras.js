@@ -1,7 +1,6 @@
 let produtosList = [];
 let fornecedoresList = [];
 let itensCompraAtual = [];
-let compraImportadaXml = null;
 
 function loadCompras() {
     $.when(
@@ -32,7 +31,7 @@ function renderCompras(compras) {
                     <table class="table table-striped table-hover">
                         <thead>
                             <tr>
-                                <th>NF</th>
+                                <th>ID</th>
                                 <th>Data</th>
                                 <th>Fornecedor</th>
                                 <th>Total</th>
@@ -45,7 +44,7 @@ function renderCompras(compras) {
                         <tbody>
                             ${compras.map(c => `
                                 <tr>
-                                    <td>${c.nota_fiscal || '-'}${c.chave_acesso ? '<div class="small text-muted">chave vinculada</div>' : ''}</td>
+                                    <td>${c.id || '-'}</td>
                                     <td>${formatDate(c.data_compra)}</td>
                                     <td>${c.fornecedor || '-'}</td>
                                     <td>${formatCurrency(c.total)}</td>
@@ -385,68 +384,6 @@ function editarItemCompra(index) {
     $('#codigo_barras_item').focus();
 }
 
-function parseChaveAcessoInfo(chave) {
-    const digits = String(chave || '').replace(/\D/g, '');
-    if (digits.length !== 44) return null;
-    return {
-        chave: digits,
-        numeroNota: String(parseInt(digits.substr(25, 9), 10)),
-        serie: String(parseInt(digits.substr(22, 3), 10)),
-        cnpjEmitente: digits.substr(6, 14)
-    };
-}
-
-function validarChaveAcessoCompra() {
-    const info = parseChaveAcessoInfo($('#chave_acesso').val());
-    if (!info) {
-        showNotification('A chave de acesso precisa ter 44 dígitos.', 'warning');
-        return;
-    }
-    $('#chave_acesso').val(info.chave);
-    if (!$('#nota_fiscal').val()) {
-        $('#nota_fiscal').val(info.numeroNota);
-    }
-    showNotification(`Chave validada. NF ${info.numeroNota}, série ${info.serie}.`, 'success');
-}
-
-function importarXmlCompra() {
-    const input = $('#xml_compra')[0];
-    if (!input || !input.files || !input.files.length) {
-        showNotification('Selecione um arquivo XML da NF-e.', 'warning');
-        return;
-    }
-    const formData = new FormData();
-    formData.append('xml', input.files[0]);
-
-    $.ajax({
-        url: `${API_URL}/compras/importar-xml`,
-        method: 'POST',
-        data: formData,
-        processData: false,
-        contentType: false
-    }).done(function(resp) {
-        compraImportadaXml = resp;
-        preencherCompraImportada(resp);
-        showNotification('XML importado. Revise os dados antes de salvar.', 'success');
-    }).fail(function(xhr) {
-        showNotification(xhr.responseJSON?.error || 'Erro ao importar XML.', 'danger');
-    });
-}
-
-function preencherCompraImportada(resp) {
-    if (!resp) return;
-    $('#nota_fiscal').val(resp.nota_fiscal || '');
-    $('#fornecedor').val(resp.fornecedor || '');
-    $('#data_compra').val(resp.data_compra || $('#data_compra').val());
-    $('#chave_acesso').val(resp.chave_acesso || $('#chave_acesso').val());
-    if (resp.total) {
-        $('#resumo_importacao_xml').html(`<div class="alert alert-light border mt-2 mb-0"><strong>XML:</strong> NF ${resp.nota_fiscal || '-'} | Emitente: ${resp.fornecedor || '-'} | Total: ${formatCurrency(resp.total)}</div>`);
-    }
-
-    itensCompraAtual = (resp.itens || []).map(item => normalizeItemCompra(item));
-    renderItensCompraTabela();
-}
-
 function onFornecedorInput() {
     const inputValue = $('#fornecedor').val();
     if (!inputValue) return;
@@ -533,7 +470,7 @@ function showCompraModal() {
             <div class="modal-dialog modal-xl modal-dialog-scrollable">
                 <div class="modal-content">
                     <div class="modal-header">
-                        <h5 class="modal-title">Lançamento de Nova compra / NF-e </h5>
+                        <h5 class="modal-title">Lançamento de Nova compra</h5>
                         <div>
                             <button type="button" class="btn btn-sm btn-light me-1" title="Minimizar" onclick="minimizarModal('compraModal')">
                                 <i class="fas fa-window-minimize"></i>
@@ -542,34 +479,8 @@ function showCompraModal() {
                         </div>
                     </div>
                     <div class="modal-body">
-                        <div class="card border-0 bg-light mb-3">
-                            <div class="card-body pb-2">
-                                <div class="row g-2 align-items-end">
-                                    <div class="col-md-5 mb-2">
-                                        <label class="form-label">Chave de acesso / código de barras da NF-e</label>
-                                        <input type="text" class="form-control" id="chave_acesso" placeholder="Use leitor ou cole os 44 dígitos">
-                                    </div>
-                                    <div class="col-md-2 mb-2">
-                                        <button class="btn btn-outline-primary w-100" type="button" onclick="validarChaveAcessoCompra()"><i class="fas fa-barcode"></i> Validar chave</button>
-                                    </div>
-                                    <div class="col-md-3 mb-2">
-                                        <label class="form-label">Importar XML da nota</label>
-                                        <input type="file" class="form-control" id="xml_compra" accept=".xml,text/xml,application/xml">
-                                    </div>
-                                    <div class="col-md-2 mb-2">
-                                        <button class="btn btn-outline-success w-100" type="button" onclick="importarXmlCompra()"><i class="fas fa-file-import"></i> Importar XML</button>
-                                    </div>
-                                </div>
-                                <div id="resumo_importacao_xml"></div>
-                                <small class="text-muted d-block mt-2">A importação preenche os campos, mas o usuário pode alterar fornecedor, prazos, forma de pagamento, valores e margens antes de salvar.</small>
-                            </div>
-                        </div>
-                        <div class="row g-2">
-                            <div class="col-md-3 mb-3">
-                                <label class="form-label">Nota fiscal</label>
-                                <input type="text" class="form-control" id="nota_fiscal">
-                            </div>
-                            <div class="col-md-3 mb-3">
+                                            <div class="row g-2">
+                            <div class="col-md-4 mb-3">
                                 <label class="form-label">Data da compra *</label>
                                 <input type="date" class="form-control" id="data_compra" value="${hoje}">
                             </div>
@@ -684,7 +595,6 @@ function showCompraModal() {
     $('#compraModal').modal('show');
     renderItensCompraTabela();
     atualizarVisibilidadePagamentoCompra();
-    setTimeout(() => $('#chave_acesso').focus(), 300);
 }
 
 function saveCompra() {
@@ -704,8 +614,6 @@ function saveCompra() {
     }
 
     const data = {
-        nota_fiscal: $('#nota_fiscal').val(),
-        chave_acesso: $('#chave_acesso').val(),
         data_compra: $('#data_compra').val(),
         fornecedor: $('#fornecedor').val(),
         total,
@@ -768,13 +676,12 @@ function viewCompra(id) {
                 <div class="modal-dialog modal-lg modal-dialog-scrollable">
                     <div class="modal-content">
                         <div class="modal-header">
-                            <h5 class="modal-title">Compra NF ${compra.nota_fiscal || compra.id}</h5>
+                            <h5 class="modal-title">Compra ${compra.id}</h5>
                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                         </div>
                         <div class="modal-body">
                             <p><strong>Fornecedor:</strong> ${escapeHtml(compra.fornecedor || '-')}</p>
                             <p><strong>Data:</strong> ${formatDate(compra.data_compra)} | <strong>Condição:</strong> ${rotuloCondicaoPagamento(compra.condicao_pagamento || 'avista')} | <strong>Forma:</strong> ${rotuloFormaPagamento(compra.forma_pagamento)}</p>
-                            <p><strong>Chave:</strong> ${escapeHtml(compra.chave_acesso || '-')}</p>
                             <p><strong>Total:</strong> ${formatCurrency(compra.total)}</p>
                             <h6>Itens</h6>
                             <table class="table table-bordered"><thead><tr><th>Produto</th><th>Qtd</th><th>Preço compra</th><th>Margem</th><th>Venda sugerida</th><th>Subtotal</th></tr></thead><tbody>${itensHtml}</tbody></table>

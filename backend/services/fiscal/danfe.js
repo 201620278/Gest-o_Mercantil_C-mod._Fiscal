@@ -1,0 +1,59 @@
+const QRCode = require('qrcode');
+
+async function gerarDanfeHtml({ venda, itens, empresa, chave, numero, serie, qrCodeUrl }) {
+  const qrCodeDataUrl = qrCodeUrl ? await QRCode.toDataURL(qrCodeUrl) : '';
+
+  const itensHtml = (itens || []).map((item) => `
+    <tr>
+      <td>${item.produto_nome || ''}</td>
+      <td style="text-align:center;">${Number(item.quantidade || 0)}</td>
+      <td style="text-align:right;">${Number(item.preco_unitario || 0).toFixed(2)}</td>
+      <td style="text-align:right;">${Number(item.subtotal || 0).toFixed(2)}</td>
+    </tr>
+  `).join('');
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>DANFE NFC-e</title>
+  <style>
+    body { font-family: monospace; width: 80mm; margin: 0 auto; font-size: 11px; }
+    h1,h2,p { margin: 0; padding: 0; }
+    .center { text-align: center; }
+    table { width: 100%; border-collapse: collapse; }
+    td, th { padding: 2px 0; vertical-align: top; }
+    .sep { border-top: 1px dashed #000; margin: 6px 0; }
+    img { max-width: 100%; }
+  </style>
+</head>
+<body>
+  <div class="center">
+    <h2>${empresa.nome || ''}</h2>
+    <p>CNPJ: ${empresa.cnpj || ''}</p>
+    <p>${empresa.endereco || ''}</p>
+    <p>DANFE NFC-e - Documento Auxiliar</p>
+    <p>NFC-e nº ${numero} Série ${serie}</p>
+  </div>
+  <div class="sep"></div>
+  <table>
+    <thead>
+      <tr><th>Item</th><th>Qtd</th><th>Vl.Unit</th><th>Total</th></tr>
+    </thead>
+    <tbody>${itensHtml}</tbody>
+  </table>
+  <div class="sep"></div>
+  <p>Total: R$ ${Number(venda.total || 0).toFixed(2)}</p>
+  <p>Desconto: R$ ${Number(venda.desconto || 0).toFixed(2)}</p>
+  <p>Forma pag.: ${venda.forma_pagamento || ''}</p>
+  <div class="sep"></div>
+  <p>Consulte pela chave de acesso:</p>
+  <p>${chave}</p>
+  ${qrCodeDataUrl ? `<div class="center"><img src="${qrCodeDataUrl}" alt="QR Code"/><p>Consulte via QR Code</p></div>` : ''}
+  <div class="sep"></div>
+  <p>EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL</p>
+</body>
+</html>`;
+}
+
+module.exports = { gerarDanfeHtml };

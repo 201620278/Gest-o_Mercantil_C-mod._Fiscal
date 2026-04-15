@@ -60,9 +60,9 @@ const subcategoriasRoutes = require('./rotas/subcategorias');
 const vendasRoutes = require('./rotas/vendas');
 const financeiroRoutes = require('./rotas/financeiro');
 const configuracoesRoutes = require('./rotas/configuracoes');
-const fiscalRoutes = require('./rotas/fiscal');
 const fornecedoresRoutes = require('./rotas/fornecedores');
 const contasReceberRoutes = require('./rotas/contas_receber');
+const fiscalRoutes = require('./rotas/fiscal');
 
 app.use('/api/produtos', verificarToken, produtosRoutes);
 app.use('/api/clientes', verificarToken, clientesRoutes);
@@ -73,8 +73,8 @@ app.use('/api/vendas', verificarToken, vendasRoutes);
 app.use('/api/contas-receber', verificarToken, contasReceberRoutes);
 app.use('/api/financeiro', verificarToken, financeiroRoutes);
 app.use('/api/configuracoes', verificarToken, configuracoesRoutes);
-app.use('/api/fiscal', verificarToken, fiscalRoutes);
 app.use('/api/fornecedores', verificarToken, fornecedoresRoutes);
+app.use('/api/fiscal', verificarToken, fiscalRoutes);
 
 // Rota principal (protegida)
 app.get('/', verificarToken, (req, res) => {

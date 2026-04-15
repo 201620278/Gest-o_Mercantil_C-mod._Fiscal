@@ -1,0 +1,169 @@
+const db = require('../../database');
+const { getFiscalConfig, incrementaNumeroFiscal } = require('./configService');
+const { carregarCertificadoPfx } = require('./certificateService');
+const { buildNfceXml } = require('./xmlBuilder');
+const { assinarXmlNfe } = require('./signer');
+const { montarLote, enviarLote } = require('./soapClient');
+const { gerarDanfeHtml } = require('./danfe');
+
+function carregarVenda(vendaId) {
+  return new Promise((resolve, reject) => {
+    db.get(`
+      SELECT v.*, c.nome as cliente_nome, c.cpf_cnpj as cliente_cpf
+      FROM vendas v
+      LEFT JOIN clientes c ON c.id = v.cliente_id
+      WHERE v.id = ?
+    `, [vendaId], (err, venda) => {
+      if (err) return reject(err);
+      if (!venda) return reject(new Error('Venda não encontrada.'));
+      db.all(`
+        SELECT vi.*, p.nome as produto_nome, p.ncm as produto_ncm, p.cfop, p.csosn, p.origem, p.cest as produto_cest,
+               p.codigo_barras as produto_codigo_barras, p.unidade
+        FROM vendas_itens vi
+        INNER JOIN produtos p ON p.id = vi.produto_id
+        WHERE vi.venda_id = ?
+        ORDER BY vi.id
+      `, [vendaId], (itErr, itens) => {
+        if (itErr) return reject(itErr);
+        resolve({ venda, itens });
+      });
+    });
+  });
+}
+
+function salvarNota(payload) {
+  return new Promise((resolve, reject) => {
+    db.run(`
+      INSERT INTO nfce_notas (
+        venda_id, numero, serie, chave_acesso, ambiente, status,
+        xml_enviado, xml_retorno, protocolo, recibo, qr_code_url, danfe_html,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+    `, [
+      payload.venda_id,
+      payload.numero,
+      payload.serie,
+      payload.chave_acesso,
+      payload.ambiente,
+      payload.status,
+      payload.xml_enviado || null,
+      payload.xml_retorno || null,
+      payload.protocolo || null,
+      payload.recibo || null,
+      payload.qr_code_url || null,
+      payload.danfe_html || null
+    ], function(err) {
+      if (err) return reject(err);
+      resolve(this.lastID);
+    });
+  });
+}
+
+async function emitirPorVendaId(vendaId) {
+  const { venda, itens } = await carregarVenda(vendaId);
+
+  const existe = await new Promise((resolve, reject) => {
+    db.get('SELECT * FROM nfce_notas WHERE venda_id = ? AND status IN ("autorizada","pendente","soap_enviado","configuracao_pendente") ORDER BY id DESC LIMIT 1', [vendaId], (err, row) => {
+      if (err) return reject(err);
+      resolve(row || null);
+    });
+  });
+
+  if (existe) {
+    return {
+      reused: true,
+      status: existe.status,
+      notaId: existe.id,
+      numero: existe.numero,
+      chaveAcesso: existe.chave_acesso,
+      danfeHtml: existe.danfe_html
+    };
+  }
+
+  const config = await getFiscalConfig();
+  const numero = await incrementaNumeroFiscal();
+
+  if (!config.nomeEmpresa || !config.cnpj || !config.ie) {
+    const notaId = await salvarNota({
+      venda_id: vendaId,
+      numero,
+      serie: config.serie,
+      chave_acesso: '',
+      ambiente: config.ambiente,
+      status: 'configuracao_pendente',
+      xml_retorno: 'Preencha nome da empresa, CNPJ e IE nas configurações.'
+    });
+
+    return {
+      success: false,
+      notaId,
+      status: 'configuracao_pendente',
+      message: 'Configuração fiscal incompleta.'
+    };
+  }
+
+  const xmlBase = buildNfceXml({ config, venda, itens, numero });
+  let xmlAssinado = xmlBase.xmlSemAssinatura;
+  let assinaturaErro = null;
+
+  try {
+    const certificado = carregarCertificadoPfx(config.certificadoPath, config.certificadoSenha);
+    xmlAssinado = assinarXmlNfe(xmlBase.xmlSemAssinatura, certificado);
+  } catch (error) {
+    assinaturaErro = error;
+  }
+
+  const danfeHtml = await gerarDanfeHtml({
+    venda,
+    itens,
+    empresa: {
+      nome: config.nomeEmpresa,
+      cnpj: config.cnpj,
+      endereco: config.endereco
+    },
+    chave: xmlBase.chave,
+    numero,
+    serie: config.serie,
+    qrCodeUrl: xmlBase.qrCodeUrl
+  });
+
+  let status = assinaturaErro ? 'configuracao_pendente' : 'pendente';
+  let xmlRetorno = assinaturaErro ? assinaturaErro.message : null;
+  let soapResponse = null;
+
+  if (!assinaturaErro) {
+    const loteXml = montarLote(xmlAssinado, String(numero));
+    soapResponse = await enviarLote({
+      url: config.urls.autorizacao,
+      loteXml
+    });
+    status = soapResponse.status || 'pendente';
+    xmlRetorno = soapResponse.raw || soapResponse.message || null;
+  }
+
+  const notaId = await salvarNota({
+    venda_id: vendaId,
+    numero,
+    serie: config.serie,
+    chave_acesso: xmlBase.chave,
+    ambiente: config.ambiente,
+    status,
+    xml_enviado: xmlAssinado,
+    xml_retorno: xmlRetorno,
+    qr_code_url: xmlBase.qrCodeUrl,
+    danfe_html: danfeHtml
+  });
+
+  return {
+    success: !assinaturaErro,
+    notaId,
+    status,
+    numero,
+    chaveAcesso: xmlBase.chave,
+    qrCodeUrl: xmlBase.qrCodeUrl,
+    danfeHtml,
+    soap: soapResponse
+  };
+}
+
+module.exports = { emitirPorVendaId };

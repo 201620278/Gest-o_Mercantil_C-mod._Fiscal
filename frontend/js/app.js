@@ -54,10 +54,12 @@ function loadPage(page) {
             return typeof loadVendas === 'function' ? loadVendas() : $('#page-content').html('<div class="alert alert-danger">Erro ao carregar histórico de vendas.</div>');
         case 'financeiro':
             return typeof loadFinanceiro === 'function' ? loadFinanceiro() : $('#page-content').html('<div class="alert alert-danger">Erro ao carregar financeiro.</div>');
-        case 'fiscal':
-            return typeof loadFiscal === 'function' ? loadFiscal() : $('#page-content').html('<div class="alert alert-danger">Erro ao carregar o módulo fiscal.</div>');
         case 'configuracoes':
             return typeof loadConfiguracoes === 'function' ? loadConfiguracoes() : $('#page-content').html('<div class="alert alert-danger">Erro ao carregar configurações.</div>');
+        case 'fiscal':
+            return typeof loadFiscal === 'function'
+                ? loadFiscal()
+                : $('#page-content').html('<div class="alert alert-danger">Erro ao carregar o módulo fiscal.</div>');
         case 'categorias':
             return carregarPaginaHtml('categorias.html', function() {
                 if (typeof loadCategoriasAndSubcategorias === 'function') {

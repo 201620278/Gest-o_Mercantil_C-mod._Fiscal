@@ -47,28 +47,6 @@ function loadVendas() {
     });
 }
 
-function getBadgeFiscal(venda) {
-    const status = (venda.nfce_status || venda.status_fiscal || 'nao_emitida').toLowerCase();
-
-    if (status === 'autorizado') {
-        return '<span class="badge bg-success">NFC-e autorizada</span>';
-    }
-
-    if (status === 'rejeitado') {
-        return '<span class="badge bg-danger">NFC-e rejeitada</span>';
-    }
-
-    if (status === 'processando' || status === 'pendente') {
-        return '<span class="badge bg-warning text-dark">NFC-e em processamento</span>';
-    }
-
-    if (status === 'erro_transmissao') {
-        return '<span class="badge bg-secondary">Erro transmissão</span>';
-    }
-
-    return '<span class="badge bg-light text-dark border">Não emitida</span>';
-}
-
 function getBadgeVenda(status) {
     if (status === 'concluida') {
         return '<span class="badge bg-success">Concluída</span>';
@@ -172,16 +150,14 @@ function renderResumoMensal(meses) {
 }
 
 function getVendasFiltradas() {
-    const termo = $('#vendasBuscaNfce').val()?.trim().toLowerCase();
+    const termo = $('#vendasBusca').val()?.trim().toLowerCase();
     const dataDe = $('#vendasBuscaDataDe').val();
     const dataAte = $('#vendasBuscaDataAte').val();
 
     return vendasCache.filter(venda => {
         if (termo) {
-            const nfceNumero = venda.numero_nfce ? String(venda.numero_nfce) : '';
-            const chave = venda.chave_nfce ? String(venda.chave_nfce) : '';
             const codigo = venda.codigo ? String(venda.codigo) : '';
-            const busca = `${nfceNumero} ${chave} ${codigo}`.toLowerCase();
+            const busca = codigo.toLowerCase();
 
             if (!busca.includes(termo)) {
                 return false;
@@ -219,7 +195,7 @@ function aplicarFiltrosVendas() {
 }
 
 function limparFiltrosVendas() {
-    $('#vendasBuscaNfce').val('');
+    $('#vendasBusca').val('');
     $('#vendasBuscaDataDe').val('');
     $('#vendasBuscaDataAte').val('');
     vendasMostrandoTodas = false;
@@ -232,7 +208,7 @@ function toggleVendasMais() {
 }
 
 function renderVendas(vendas) {
-    const termo = $('#vendasBuscaNfce').val()?.trim();
+    const termo = $('#vendasBusca').val()?.trim();
     const dataDe = $('#vendasBuscaDataDe').val();
     const dataAte = $('#vendasBuscaDataAte').val();
     const filtrosAtivos = Boolean(termo || dataDe || dataAte);
@@ -262,7 +238,7 @@ function renderVendas(vendas) {
             <div class="card-body">
                 <div class="row g-2 mb-3">
                     <div class="col-md-4">
-                        <input id="vendasBuscaNfce" type="text" class="form-control" placeholder="Buscar por NFC-e / Código" value="${termo || ''}" />
+                        <input id="vendasBusca" type="text" class="form-control" placeholder="Buscar por Código" value="${termo || ''}" />
                     </div>
                     <div class="col-md-3">
                         <input id="vendasBuscaDataDe" type="date" class="form-control" value="${dataDe || ''}" />
@@ -289,8 +265,6 @@ function renderVendas(vendas) {
                                 <th>Total</th>
                                 <th>Pagamento</th>
                                 <th>Status Venda</th>
-                                <th>Status Fiscal</th>
-                                <th>NFC-e</th>
                                 <th>Ações</th>
                             </tr>
                         </thead>
@@ -306,11 +280,12 @@ function renderVendas(vendas) {
                                             <td>${formatCurrency(v.total || 0)}</td>
                                             <td>${v.forma_pagamento || '-'}</td>
                                             <td>${getBadgeVenda(v.status)}</td>
-                                            <td>${getBadgeFiscal(v)}</td>
-                                            <td>${v.numero_nfce ? `Nº ${v.numero_nfce}` : '-'}</td>
                                             <td>
                                                 <button class="btn btn-sm btn-info" onclick="viewVenda(${v.id})" title="Ver venda">
                                                     <i class="fas fa-eye"></i>
+                                                </button>
+                                                <button class="btn btn-sm btn-success" onclick="emitirFiscalPorVenda(${v.id})" title="Emitir NFC-e">
+                                                    <i class="fas fa-file-invoice"></i>
                                                 </button>
                                                 ${
                                                     v.status === 'concluida'
@@ -370,8 +345,6 @@ function viewVenda(id) {
                                 <p><strong>Desconto:</strong> ${formatCurrency(venda.desconto || 0)}</p>
                                 <p><strong>Total:</strong> ${formatCurrency(venda.total)}</p>
                                 <p><strong>Status:</strong> ${venda.status}</p>
-                                <p><strong>Status Fiscal:</strong> ${venda.status_fiscal || 'não emitido'}</p>
-                                ${venda.chave_nfce ? `<p><strong>Chave NFC-e:</strong> ${venda.chave_nfce}</p>` : ''}
                                 <hr>
                                 <h6>Itens da Venda</h6>
                                 <div class="table-responsive">
@@ -428,6 +401,34 @@ function cancelarVenda(id) {
         },
         error: function(xhr) {
             showNotification('Erro ao cancelar venda: ' + (xhr.responseJSON?.error || 'Erro desconhecido'), 'danger');
+        }
+    });
+}
+
+function emitirFiscalPorVenda(id) {
+    if (!confirm('Emitir NFC-e para esta venda?')) {
+        return;
+    }
+
+    $.ajax({
+        url: `${API_URL}/fiscal/emitir/venda/${id}`,
+        method: 'POST',
+        success: function(resp) {
+            if (resp?.danfeHtml) {
+                const win = window.open('', '_blank', 'width=420,height=800');
+                if (win) {
+                    win.document.open();
+                    win.document.write(resp.danfeHtml);
+                    win.document.close();
+                    win.focus();
+                    win.print();
+                }
+            }
+
+            showNotification(resp?.message || 'Processo fiscal executado.');
+        },
+        error: function(xhr) {
+            showNotification(xhr.responseJSON?.error || 'Erro ao emitir NFC-e.', 'danger');
         }
     });
 }

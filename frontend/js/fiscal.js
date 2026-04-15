@@ -1,100 +1,426 @@
-function loadFiscal() {
-    const html = `
-        <div class="container-fluid">
-            <h2 class="mb-4">Módulo Fiscal</h2>
+let fiscalNotasCache = [];
 
-            <div class="row">
-                <div class="col-md-6">
-                    <div class="card mb-3">
-                        <div class="card-header">Configuração Fiscal</div>
-                        <div class="card-body">
-                            <button class="btn btn-primary" onclick="abrirConfigFiscal()">Configurar Empresa</button>
+function loadFiscal() {
+    renderFiscal();
+    carregarFiscalConfig();
+    carregarFiscalNotas();
+}
+
+function renderFiscal() {
+    const html = `
+        <div class="card shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div><i class="fas fa-receipt"></i> Módulo Fiscal NFC-e</div>
+                <div class="d-flex gap-2">
+                    <button class="btn btn-outline-primary btn-sm" onclick="carregarFiscalConfig()">
+                        <i class="fas fa-rotate-right"></i> Recarregar
+                    </button>
+                    <button class="btn btn-success btn-sm" onclick="salvarConfigFiscal()">
+                        <i class="fas fa-save"></i> Salvar Configuração
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <ul class="nav nav-tabs mb-3">
+                    <li class="nav-item">
+                        <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#fiscal-config-tab" type="button">
+                            Configuração Fiscal
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#fiscal-notas-tab" type="button">
+                            NFC-e Emitidas
+                        </button>
+                    </li>
+                    <li class="nav-item">
+                        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#fiscal-emissao-tab" type="button">
+                            Emissão Manual
+                        </button>
+                    </li>
+                </ul>
+
+                <div class="tab-content">
+                    <div class="tab-pane fade show active" id="fiscal-config-tab">
+                        <div id="fiscal-config-form-area">
+                            <div class="text-center p-4">
+                                <div class="spinner-border text-primary"></div>
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                <div class="col-md-6">
-                    <div class="card mb-3">
-                        <div class="card-header">Notas Emitidas</div>
-                        <div class="card-body">
-                            <button class="btn btn-success" onclick="listarNotasFiscais()">Ver NFC-es</button>
+                    <div class="tab-pane fade" id="fiscal-notas-tab">
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-4">
+                                <input type="text" id="fiscalBuscaNota" class="form-control" placeholder="Buscar por chave, venda ou protocolo" oninput="renderTabelaFiscalNotas()">
+                            </div>
+                            <div class="col-md-3">
+                                <select id="fiscalFiltroStatus" class="form-control" onchange="renderTabelaFiscalNotas()">
+                                    <option value="">Todos os status</option>
+                                    <option value="autorizado">Autorizado</option>
+                                    <option value="rejeitada">Rejeitada</option>
+                                    <option value="erro">Erro</option>
+                                    <option value="pendente">Pendente</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <button class="btn btn-primary w-100" onclick="carregarFiscalNotas()">
+                                    <i class="fas fa-rotate-right"></i> Atualizar Notas
+                                </button>
+                            </div>
+                        </div>
+                        <div id="fiscal-notas-area"></div>
+                    </div>
+
+                    <div class="tab-pane fade" id="fiscal-emissao-tab">
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label">ID da venda</label>
+                                <input type="number" min="1" id="fiscalVendaIdManual" class="form-control" placeholder="Ex.: 15">
+                            </div>
+                            <div class="col-md-6 d-flex align-items-end">
+                                <button class="btn btn-warning w-100" onclick="emitirFiscalManual()">
+                                    <i class="fas fa-file-invoice"></i> Emitir NFC-e da venda
+                                </button>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-info mt-3 mb-0">
+                            Use esta aba para emitir manualmente uma NFC-e de uma venda já gravada no sistema.
                         </div>
                     </div>
                 </div>
             </div>
-
-            <div id="fiscal-content"></div>
         </div>
     `;
 
     $('#page-content').html(html);
 }
 
-function abrirConfigFiscal() {
-    if (typeof loadConfiguracoes === 'function') {
-        loadPage('configuracoes');
-    } else {
-        $('#fiscal-content').html('<div class="alert alert-danger">Módulo de configurações não disponível.</div>');
-    }
+function getFiscalField(label, id, value = '', help = '', type = 'text') {
+    return `
+        <div class="col-md-4 mb-3">
+            <label class="form-label">${label}</label>
+            <input type="${type}" class="form-control fiscal-field" id="${id}" value="${String(value || '').replace(/"/g, '&quot;')}">
+            ${help ? `<div class="form-text">${help}</div>` : ''}
+        </div>
+    `;
 }
 
-function listarNotasFiscais() {
-    $('#fiscal-content').html('<div class="text-center py-4"><div class="spinner-border text-primary" role="status"></div><div class="mt-2">Carregando notas fiscais...</div></div>');
+function carregarFiscalConfig() {
+    $.ajax({
+        url: `${API_URL}/fiscal/config`,
+        method: 'GET',
+        success: function(cfg) {
+            const html = `
+                <div class="row">
+                    ${getFiscalField('Ambiente', 'fiscal_ambiente', cfg.ambiente || 2, '2 = homologação, 1 = produção', 'number')}
+                    ${getFiscalField('UF', 'fiscal_uf_sigla', cfg.uf || 'CE')}
+                    ${getFiscalField('Código UF', 'fiscal_codigo_uf', cfg.codigoUf || '23')}
+                    ${getFiscalField('Série', 'fiscal_serie', cfg.serie || 1, '', 'number')}
+                    ${getFiscalField('Número atual', 'fiscal_numero_atual', cfg.numeroAtual || 1, 'Próximo número que será usado', 'number')}
+                    ${getFiscalField('Regime tributário CRT', 'fiscal_regime_tributario', cfg.crt || '1', '1 = Simples Nacional')}
 
+                    ${getFiscalField('Nome da empresa', 'nome_empresa', cfg.nomeEmpresa || '')}
+                    ${getFiscalField('CNPJ', 'cnpj', cfg.cnpj || '')}
+                    ${getFiscalField('Inscrição Estadual', 'fiscal_ie', cfg.ie || '')}
+                    ${getFiscalField('Telefone', 'telefone', cfg.telefone || '')}
+                    ${getFiscalField('Email', 'email', cfg.email || '')}
+                    ${getFiscalField('Endereço livre', 'endereco', cfg.endereco || '', 'Usado como apoio para montar endereço do emitente')}
+
+                    ${getFiscalField('Código do município', 'fiscal_municipio_codigo', cfg.municipioCodigo || '2307304')}
+                    ${getFiscalField('Município', 'fiscal_municipio_nome', cfg.municipioNome || 'Juazeiro do Norte')}
+                    ${getFiscalField('CEP emitente', 'fiscal_emitente_cep', cfg.cep || '')}
+                    ${getFiscalField('Logradouro', 'fiscal_emitente_logradouro', cfg.logradouro || '')}
+                    ${getFiscalField('Número', 'fiscal_emitente_numero', cfg.numeroEndereco || 'S/N')}
+                    ${getFiscalField('Bairro', 'fiscal_emitente_bairro', cfg.bairro || '')}
+
+                    ${getFiscalField('ID CSC', 'fiscal_id_csc', cfg.idCSC || '')}
+                    ${getFiscalField('Token CSC', 'fiscal_token_csc', cfg.tokenCSC || '')}
+
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label">Enviar certificado A1 (.pfx)</label>
+                        <input type="file" id="fiscal_certificado_upload" class="form-control" accept=".pfx">
+                        <div class="form-text">Envie o certificado digital da empresa em formato .pfx</div>
+                        <div class="form-text mt-2" style="color: ${cfg.certificadoPath ? 'green' : 'red'};">
+                            ${cfg.certificadoPath ? 'Certificado ativo' : 'Certificado inativo'}
+                        </div>
+                    </div>
+                    ${getFiscalField('Senha do certificado', 'fiscal_certificado_senha', cfg.certificadoSenha || '', '', 'password')}
+                    <input type="hidden" class="fiscal-field" id="fiscal_certificado_path" value="${cfg.certificadoPath || ''}">
+                    ${getFiscalField('Tipo impressão', 'fiscal_tp_imp', cfg.tpImp || 4, '4 = DANFE NFC-e')}
+                    ${getFiscalField('URL consulta QRCode homologação', 'fiscal_csc_qrcode_url_homologacao', (cfg.urls && cfg.urls.consultaQr) || '')}
+                    ${getFiscalField('URL consulta chave homologação', 'fiscal_consulta_chave_url_homologacao', (cfg.urls && cfg.urls.consultaChave) || '')}
+                    ${getFiscalField('WS autorização homologação', 'fiscal_ws_autorizacao_homologacao', (cfg.urls && cfg.urls.autorizacao) || '')}
+                    ${getFiscalField('WS retorno homologação', 'fiscal_ws_retorno_homologacao', (cfg.urls && cfg.urls.retorno) || '')}
+                    ${getFiscalField('WS status homologação', 'fiscal_ws_status_homologacao', (cfg.urls && cfg.urls.status) || '')}
+                </div>
+
+                <div class="d-flex gap-2 flex-wrap align-items-center">
+                    <button class="btn btn-success btn-sm" onclick="salvarConfigFiscal()">
+                        <i class="fas fa-save"></i> Salvar tudo
+                    </button>
+                    <button class="btn btn-primary btn-sm" onclick="uploadCertificadoFiscal()">
+                        <i class="fas fa-upload"></i> Enviar certificado
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="testarCertificadoFiscal()">
+                        <i class="fas fa-certificate"></i> Testar certificado
+                    </button>
+                </div>
+            `;
+
+            $('#fiscal-config-form-area').html(html);
+        },
+        error: function(xhr) {
+            $('#fiscal-config-form-area').html(`
+                <div class="alert alert-danger">
+                    Erro ao carregar configuração fiscal: ${xhr.responseJSON?.error || 'erro desconhecido'}
+                </div>
+            `);
+        }
+    });
+}
+
+function coletarPayloadFiscal() {
+    const payload = {};
+
+    $('.fiscal-field').each(function() {
+        payload[$(this).attr('id')] = $(this).val();
+    });
+
+    return payload;
+}
+
+function salvarConfigFiscal() {
+    const payload = coletarPayloadFiscal();
+
+    $.ajax({
+        url: `${API_URL}/fiscal/config`,
+        method: 'PUT',
+        contentType: 'application/json',
+        data: JSON.stringify(payload),
+        success: function() {
+            showNotification('Configuração fiscal salva com sucesso!');
+            carregarFiscalConfig();
+        },
+        error: function(xhr) {
+            showNotification(xhr.responseJSON?.error || 'Erro ao salvar configuração fiscal.', 'danger');
+        }
+    });
+}
+
+function testarCertificadoFiscal() {
+    const certificadoPath = $('#fiscal_certificado_path').val();
+    const senha = $('#fiscal_certificado_senha').val();
+
+    $.ajax({
+        url: `${API_URL}/fiscal/config/certificado/testar`,
+        method: 'POST',
+        contentType: 'application/json',
+        data: JSON.stringify({ certificadoPath, senha }),
+        success: function(resp) {
+            showNotification(`Certificado validado com sucesso. Tamanho base64: ${resp.certBase64Length}`);
+        },
+        error: function(xhr) {
+            showNotification(xhr.responseJSON?.error || 'Falha ao validar certificado.', 'danger');
+        }
+    });
+}
+
+function uploadCertificadoFiscal() {
+    const input = document.getElementById('fiscal_certificado_upload');
+
+    if (!input || !input.files || !input.files.length) {
+        showNotification('Selecione um arquivo .pfx para enviar.', 'warning');
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('certificado', input.files[0]);
+
+    $.ajax({
+        url: `${API_URL}/fiscal/certificado/upload`,
+        method: 'POST',
+        data: formData,
+        processData: false,
+        contentType: false,
+        success: function(resp) {
+            $('#fiscal_certificado_path').val(resp.path || '');
+            showNotification('Certificado enviado com sucesso!');
+        },
+        error: function(xhr) {
+            showNotification(xhr.responseJSON?.error || 'Erro ao enviar certificado.', 'danger');
+        }
+    });
+}
+
+function carregarFiscalNotas() {
     $.ajax({
         url: `${API_URL}/fiscal/notas`,
         method: 'GET',
         success: function(notas) {
-            if (!notas || notas.length === 0) {
-                $('#fiscal-content').html('<div class="alert alert-warning">Nenhuma NFC-e registrada ainda.</div>');
-                return;
-            }
+            fiscalNotasCache = Array.isArray(notas) ? notas : [];
+            renderTabelaFiscalNotas();
+        },
+        error: function(xhr) {
+            $('#fiscal-notas-area').html(`
+                <div class="alert alert-danger">
+                    Erro ao carregar NFC-e: ${xhr.responseJSON?.error || 'erro desconhecido'}
+                </div>
+            `);
+        }
+    });
+}
 
-            const rows = notas.map(nota => `
-                <tr>
-                    <td>${escapeHtml(nota.id)}</td>
-                    <td>${escapeHtml(nota.venda_id)}</td>
-                    <td>${escapeHtml(nota.venda_codigo || '')}</td>
-                    <td>${escapeHtml(nota.cliente_nome || '')}</td>
-                    <td>${escapeHtml(nota.numero)}</td>
-                    <td>${escapeHtml(nota.serie)}</td>
-                    <td>${escapeHtml(nota.ambiente)}</td>
-                    <td>${escapeHtml(nota.status)}</td>
-                    <td>${escapeHtml(nota.data_emissao)}</td>
-                </tr>
-            `).join('');
+function renderTabelaFiscalNotas() {
+    const termo = ($('#fiscalBuscaNota').val() || '').toLowerCase().trim();
+    const status = ($('#fiscalFiltroStatus').val() || '').toLowerCase().trim();
 
-            const html = `
-                <div class="card mt-3">
-                    <div class="card-header">Notas Fiscais Emitidas</div>
-                    <div class="card-body p-0">
-                        <div class="table-responsive">
-                            <table class="table table-sm table-striped mb-0">
-                                <thead>
-                                    <tr>
-                                        <th>ID</th>
-                                        <th>Venda ID</th>
-                                        <th>Código Venda</th>
-                                        <th>Cliente</th>
-                                        <th>Número</th>
-                                        <th>Série</th>
-                                        <th>Ambiente</th>
-                                        <th>Status</th>
-                                        <th>Data Emissão</th>
-                                    </tr>
-                                </thead>
-                                <tbody>${rows}</tbody>
-                            </table>
+    const notas = fiscalNotasCache.filter(n => {
+        const matchTermo = !termo || [n.chave_acesso, n.venda_codigo, n.protocolo, n.recibo, n.xml_retorno, n.xml_enviado]
+            .filter(Boolean)
+            .join(' ')
+            .toLowerCase()
+            .includes(termo);
+
+        const matchStatus = !status || String(n.status || '').toLowerCase().includes(status);
+        return matchTermo && matchStatus;
+    });
+
+    const html = `
+        <div class="table-responsive">
+            <table class="table table-striped table-hover align-middle">
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Venda</th>
+                        <th>Situação</th>
+                        <th>Chave</th>
+                        <th>Protocolo</th>
+                        <th>Data</th>
+                        <th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${notas.length ? notas.map(n => `
+                        <tr>
+                            <td>${n.id}</td>
+                            <td>${n.venda_codigo || n.venda_id || '-'}</td>
+                            <td><span class="badge ${getBadgeFiscalClass(n.status)}">${n.status || 'pendente'}</span></td>
+                            <td style="max-width:220px; word-break:break-all;">${n.chave_acesso || '-'}</td>
+                            <td>${n.protocolo || '-'}</td>
+                            <td>${formatDateTime(n.created_at)}</td>
+                            <td>
+                                <button class="btn btn-sm btn-info" onclick="verDetalheFiscal(${n.id})">
+                                    <i class="fas fa-eye"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `).join('') : `
+                        <tr>
+                            <td colspan="7" class="text-center text-muted">Nenhuma NFC-e encontrada.</td>
+                        </tr>
+                    `}
+                </tbody>
+            </table>
+        </div>
+    `;
+
+    $('#fiscal-notas-area').html(html);
+}
+
+function getBadgeFiscalClass(status) {
+    const s = String(status || '').toLowerCase();
+
+    if (s.includes('autoriz')) return 'bg-success';
+    if (s.includes('rejeit')) return 'bg-danger';
+    if (s.includes('erro')) return 'bg-warning text-dark';
+
+    return 'bg-secondary';
+}
+
+function verDetalheFiscal(id) {
+    $.ajax({
+        url: `${API_URL}/fiscal/notas/${id}`,
+        method: 'GET',
+        success: function(nota) {
+            const modalHtml = `
+                <div class="modal fade" id="modalDetalheFiscal" tabindex="-1">
+                    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                        <div class="modal-content">
+                            <div class="modal-header">
+                                <h5 class="modal-title">Detalhe NFC-e #${nota.id}</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="row mb-3">
+                                    <div class="col-md-4"><strong>Venda:</strong> ${nota.venda_codigo || nota.venda_id || '-'}</div>
+                                    <div class="col-md-4"><strong>Status:</strong> ${nota.status || '-'}</div>
+                                    <div class="col-md-4"><strong>Protocolo:</strong> ${nota.protocolo || '-'}</div>
+                                </div>
+
+                                <div class="mb-2">
+                                    <strong>Chave de acesso:</strong><br>${nota.chave_acesso || '-'}
+                                </div>
+
+                                <hr>
+
+                                <h6>XML Enviado</h6>
+                                <textarea class="form-control mb-3" rows="12" readonly>${nota.xml_enviado || ''}</textarea>
+
+                                <h6>XML de Retorno</h6>
+                                <textarea class="form-control" rows="12" readonly>${nota.xml_retorno || ''}</textarea>
+                            </div>
                         </div>
                     </div>
                 </div>
             `;
 
-            $('#fiscal-content').html(html);
+            $('#modal-container').html(modalHtml);
+            new bootstrap.Modal(document.getElementById('modalDetalheFiscal')).show();
         },
         error: function(xhr) {
-            $('#fiscal-content').html('<div class="alert alert-danger">Erro ao carregar notas fiscais.</div>');
-            console.error(xhr);
+            showNotification(xhr.responseJSON?.error || 'Erro ao buscar detalhe da NFC-e.', 'danger');
         }
     });
+}
+
+function emitirFiscalManual() {
+    const vendaId = Number($('#fiscalVendaIdManual').val());
+
+    if (!vendaId) {
+        showNotification('Informe um ID de venda válido.', 'warning');
+        return;
+    }
+
+    $.ajax({
+        url: `${API_URL}/fiscal/emitir/venda/${vendaId}`,
+        method: 'POST',
+        success: function(resp) {
+            if (resp?.danfeHtml) {
+                imprimirHtmlFiscal(resp.danfeHtml);
+            }
+
+            showNotification(resp?.message || 'Processo fiscal executado.');
+            carregarFiscalNotas();
+        },
+        error: function(xhr) {
+            showNotification(xhr.responseJSON?.error || 'Erro ao emitir NFC-e.', 'danger');
+        }
+    });
+}
+
+function imprimirHtmlFiscal(html) {
+    const win = window.open('', '_blank', 'width=420,height=800');
+
+    if (!win) {
+        showNotification('Permita popups para imprimir o DANFE NFC-e.', 'warning');
+        return;
+    }
+
+    win.document.open();
+    win.document.write(html);
+    win.document.close();
+    win.focus();
+
+    setTimeout(() => win.print(), 500);
 }

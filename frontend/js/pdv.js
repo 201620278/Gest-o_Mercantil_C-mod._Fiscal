@@ -6,6 +6,7 @@ let formaPagamentoSelecionada = null;
 let vendaPrazoInfo = null;
 let debitoAvisoModal = null;
 let vendaEmProcessamento = false;
+let emitirFiscalSelecionado = false;
 
 // Inicializar PDV
 function loadPDV() {
@@ -589,6 +590,8 @@ function finalizarVenda() {
 
   const total = subtotal - desconto;
 
+  emitirFiscalSelecionado = window.confirm('Deseja emitir NFC-e desta venda agora?');
+
   if (total < 0) {
     showNotification('O desconto não pode ser maior que o valor total da venda.', 'warning');
     return;
@@ -616,6 +619,8 @@ function finalizarVenda() {
     dados.primeiro_vencimento = vendaPrazoInfo.primeiro_vencimento;
   }
 
+  dados.emitir_fiscal = emitirFiscalSelecionado;
+
   vendaEmProcessamento = true;
 
   function enviarVenda(dadosVenda) {
@@ -634,106 +639,22 @@ function finalizarVenda() {
           return;
         }
 
-        mostrarConfirmacaoFiscal(vendaId, function(emitirFiscal) {
-          if (!emitirFiscal) {
-            vendaEmProcessamento = false;
-            imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
-            showNotification('Venda salva como não fiscal. Cupom não fiscal impresso.', 'info');
-            finalizarPosVenda();
-            return;
+        vendaEmProcessamento = false;
+
+        if (response.fiscal && response.fiscal.danfeHtml) {
+          imprimirHtmlFiscal(response.fiscal.danfeHtml);
+          showNotification('Venda salva e NFC-e preparada para impressão.', 'success');
+        } else {
+          imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
+
+          if (response.fiscal && response.fiscal.message) {
+            showNotification(`Venda salva. NFC-e pendente: ${response.fiscal.message}`, 'warning');
+          } else {
+            showNotification('Venda salva com sucesso. Cupom não fiscal impresso.', 'info');
           }
+        }
 
-          $.ajax({
-            url: `${API_URL}/fiscal/nfce/validar/${vendaId}`,
-            method: 'GET',
-            success: function(validacao) {
-              if (!validacao.ok) {
-                vendaEmProcessamento = false;
-                const mensagemErros = Array.isArray(validacao.erros)
-                  ? validacao.erros.join(' | ')
-                  : 'Dados fiscais incompletos';
-
-                showNotification(
-                  `Venda salva, mas não foi possível emitir NFC-e: ${mensagemErros}`,
-                  'warning'
-                );
-
-                imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
-                finalizarPosVenda();
-                return;
-              }
-
-              $.ajax({
-                url: `${API_URL}/fiscal/nfce/emitir/${vendaId}`,
-                method: 'POST',
-                success: function(nota) {
-                  vendaEmProcessamento = false;
-                  const motivo = nota?.message || nota?.motivo_retorno || 'Retorno SEFAZ desconhecido.';
-
-                  if (nota && nota.status === 'autorizado') {
-                    showNotification(motivo, 'success');
-                    imprimirDanfeNfce(vendaId, dados, total, desconto, nota);
-                  } else {
-                    showNotification(motivo, 'warning');
-                    imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
-                  }
-
-                  finalizarPosVenda();
-                },
-                error: function(xhr) {
-                  vendaEmProcessamento = false;
-
-                  let detalheErro = '';
-                  if (xhr.responseJSON?.error) {
-                    detalheErro = xhr.responseJSON.error;
-                  } else if (xhr.responseText) {
-                    try {
-                      const parsed = JSON.parse(xhr.responseText);
-                      detalheErro = parsed.error || parsed.message || xhr.responseText;
-                    } catch (_) {
-                      detalheErro = xhr.responseText;
-                    }
-                  } else if (xhr.statusText) {
-                    detalheErro = xhr.statusText;
-                  }
-
-                  const mensagem = detalheErro
-                    ? `Venda salva, mas houve erro na emissão fiscal: ${detalheErro}`
-                    : 'Venda salva, mas houve erro na emissão fiscal.';
-
-                  showNotification(mensagem, 'warning');
-                  imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
-                  finalizarPosVenda();
-                }
-              });
-            },
-            error: function(xhr) {
-              vendaEmProcessamento = false;
-
-              let detalheErro = '';
-              if (xhr.responseJSON?.error) {
-                detalheErro = xhr.responseJSON.error;
-              } else if (xhr.responseText) {
-                try {
-                  const parsed = JSON.parse(xhr.responseText);
-                  detalheErro = parsed.error || parsed.message || xhr.responseText;
-                } catch (_) {
-                  detalheErro = xhr.responseText;
-                }
-              } else if (xhr.statusText) {
-                detalheErro = xhr.statusText;
-              }
-
-              const mensagem = detalheErro
-                ? `Venda salva, mas houve erro na validação fiscal: ${detalheErro}`
-                : 'Venda salva, mas houve erro ao validar os dados fiscais.';
-
-              showNotification(mensagem, 'warning');
-              imprimirCupomNaoFiscal(vendaId, dados, total, desconto);
-              finalizarPosVenda();
-            }
-          });
-        });
+        finalizarPosVenda();
       },
       error: function(xhr) {
         vendaEmProcessamento = false;
@@ -790,11 +711,6 @@ function finalizarVenda() {
   }
 }
 
-function mostrarConfirmacaoFiscal(vendaId, callback) {
-    const emitir = confirm('Deseja emitir NFC-e para esta venda?\n\nOK = emitir cupom fiscal\nCancelar = gerar apenas cupom não fiscal');
-    callback(emitir);
-}
-
 // Cancelar venda atual
 function cancelarVendaAtual() {
     if (carrinho.length > 0 && confirm('Tem certeza que deseja cancelar esta venda?')) {
@@ -805,158 +721,6 @@ function cancelarVendaAtual() {
         atualizarCarrinho();
         showNotification('Venda cancelada!', 'info');
     }
-}
-
-// Imprimir DANFE NFC-e (cupom fiscal autorizado)
-function imprimirDanfeNfce(vendaId, venda, total, desconto, nota) {
-    const dataHora = new Date().toLocaleString('pt-BR');
-    const formaPagamentoTexto = {
-        'dinheiro': 'Dinheiro',
-        'cartao_credito': 'Cartão de Crédito',
-        'cartao_debito': 'Cartão de Débito',
-        'pix': 'PIX',
-        'prazo': 'A Prazo'
-    }[venda.forma_pagamento] || venda.forma_pagamento;
-
-    const chaveFormatada = nota.chave_acesso ? nota.chave_acesso.match(/.{1,4}/g).join(' ') : 'N/A';
-    const qrCodeImg = nota.qr_code_base64 || 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
-
-    const cupomHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="UTF-8">
-            <title>DANFE NFC-e</title>
-            <style>
-                body {
-                    font-family: monospace;
-                    width: 80mm;
-                    margin: 0 auto;
-                    padding: 10px;
-                    font-size: 12px;
-                }
-                .header {
-                    text-align: center;
-                    margin-bottom: 10px;
-                    padding-bottom: 8px;
-                    border-bottom: 1px dashed #000;
-                }
-                .empresa {
-                    font-size: 14px;
-                    font-weight: bold;
-                    margin-bottom: 3px;
-                }
-                .fiscal-info {
-                    font-size: 10px;
-                    margin-bottom: 5px;
-                }
-                .itens {
-                    margin: 10px 0;
-                }
-                .cupom-item {
-                    margin-bottom: 6px;
-                    padding-bottom: 3px;
-                    border-bottom: 1px dotted #ccc;
-                }
-                .total {
-                    text-align: right;
-                    margin-top: 10px;
-                    padding-top: 8px;
-                    border-top: 1px dashed #000;
-                }
-                .fiscal-data {
-                    margin-top: 10px;
-                    border-top: 1px dashed #000;
-                    padding-top: 8px;
-                    font-size: 9px;
-                }
-                .qr-code {
-                    text-align: center;
-                    margin: 8px 0;
-                }
-                .footer {
-                    text-align: center;
-                    margin-top: 15px;
-                    padding-top: 8px;
-                    border-top: 1px dashed #000;
-                    font-size: 9px;
-                }
-                @media print {
-                    body {
-                        margin: 0;
-                        padding: 5px;
-                    }
-                }
-            </style>
-        </head>
-        <body>
-            <div class="header">
-                <div class="empresa">ESQUINAO DA ECONOMIA</div>
-                <div>CNPJ: 65.957.340/0001-50</div>
-                <div>IE: 073252638</div>
-                <div>R. Vereador José Rodrigues Soares, 268</div>
-                <div>Piraijá - Juazeiro do Norte - CE</div>
-                <div class="fiscal-info">
-                    NFC-e ${nota.numero}/${nota.serie}<br>
-                    ${dataHora}
-                </div>
-            </div>
-
-            <div class="itens">
-                ${venda.itens.map(item => {
-                    let nome = item.produto_nome;
-                    if (!nome && produtosDisponiveis) {
-                        const prod = produtosDisponiveis.find(p => p.id === (item.produto_id || item.id));
-                        nome = prod ? prod.nome : 'Produto';
-                    }
-                    return `
-                        <div class="cupom-item">
-                            ${escapeHtml(nome || 'Produto')}<br>
-                            ${item.quantidade} x ${formatCurrency(item.preco_unitario)} = ${formatCurrency(item.subtotal)}
-                        </div>
-                    `;
-                }).join('')}
-            </div>
-
-            <div class="total">
-                Subtotal: ${formatCurrency(total + desconto)}<br>
-                Desconto: ${formatCurrency(desconto)}<br>
-                <strong>TOTAL: ${formatCurrency(total)}</strong><br>
-                Forma Pagamento: ${formaPagamentoTexto}
-            </div>
-
-            ${vendaPrazoInfo && formaPagamentoSelecionada === 'prazo' ? `
-                <div style="margin-top: 8px; border-top: 1px dashed #000; padding-top: 5px;">
-                    <strong>Venda a Prazo</strong><br>
-                    Parcelas: ${vendaPrazoInfo.parcelas}<br>
-                    1º Vencimento: ${vendaPrazoInfo.primeiro_vencimento}
-                </div>
-            ` : ''}
-
-            <div class="fiscal-data">
-                <strong>DADOS FISCAIS</strong><br>
-                Chave: ${chaveFormatada}<br>
-                Protocolo: ${nota.protocolo || 'N/A'}<br>
-                Autorização: ${nota.data_autorizacao ? new Date(nota.data_autorizacao).toLocaleString('pt-BR') : 'N/A'}<br>
-                <div class="qr-code">
-                    <img src="${qrCodeImg}" alt="QR Code NFC-e" style="width: 80px; height: 80px; border: 1px solid #000;">
-                    <br><small>Consulta via QR Code</small>
-                </div>
-            </div>
-
-            <div class="footer">
-                <strong>DOCUMENTO FISCAL ELETRÔNICO</strong><br>
-                NFC-e autorizada pela SEFAZ<br>
-                Consulte em: ${nota.qr_code_url || 'www.sefaz.ce.gov.br'}
-            </div>
-        </body>
-        </html>
-    `;
-
-    const printWindow = window.open('', '_blank', 'width=400,height=700');
-    printWindow.document.write(cupomHtml);
-    printWindow.document.close();
-    printWindow.print();
 }
 
 // Imprimir cupom não fiscal
@@ -1076,6 +840,21 @@ function imprimirCupomNaoFiscal(vendaId, venda, total, desconto) {
     const printWindow = window.open('', '_blank', 'width=400,height=600');
     printWindow.document.write(cupomHtml);
     printWindow.document.close();
+    printWindow.print();
+}
+
+function imprimirHtmlFiscal(html) {
+    const printWindow = window.open('', '_blank', 'width=420,height=800');
+
+    if (!printWindow) {
+        showNotification('Permita popups para impressão do DANFE NFC-e.', 'warning');
+        return;
+    }
+
+    printWindow.document.open();
+    printWindow.document.write(html);
+    printWindow.document.close();
+    printWindow.focus();
     printWindow.print();
 }
 

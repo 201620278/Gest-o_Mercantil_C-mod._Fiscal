@@ -319,6 +319,7 @@ function inicializarBanco() {
       }
     });
 
+
     // Tabela de NFC-e emitidas
     db.run(`
       CREATE TABLE IF NOT EXISTS nfce_notas (
@@ -496,6 +497,15 @@ function inserirConfiguracoesPadrao() {
     ['telefone', '', 'string', 'Telefone para contato'],
     ['email', '', 'string', 'Email para contato'],
     ['endereco', '', 'text', 'Endereço da empresa'],
+    ['logo', '', 'text', 'URL da logo'],
+    ['imprimir_cupom', 'true', 'boolean', 'Imprimir cupom fiscal'],
+    ['juros_mora', '1.0', 'decimal', 'Juros de mora por dia (%)'],
+    ['backup_google_enabled', 'false', 'boolean', 'Backup automático para Google Drive habilitado'],
+    ['backup_google_frequency', '0 2 * * *', 'string', 'Frequência de backup para Google Drive'],
+    ['backup_google_client_id', '', 'string', 'Google Client ID para backup'],
+    ['backup_google_client_secret', '', 'string', 'Google Client Secret para backup'],
+    ['backup_google_redirect_uris', '[]', 'text', 'Google Redirect URIs para OAuth'],
+    ['backup_google_refresh_token', '', 'text', 'Google Refresh Token para backup'],
     ['fiscal_ambiente', '2', 'number', '1=produção, 2=homologação'],
     ['fiscal_uf_sigla', 'CE', 'string', 'UF emitente'],
     ['fiscal_codigo_uf', '23', 'string', 'Código IBGE da UF emitente'],
@@ -520,16 +530,7 @@ function inserirConfiguracoesPadrao() {
     ['fiscal_emitente_cep', '', 'string', 'CEP emitente'],
     ['fiscal_emitente_logradouro', '', 'string', 'Logradouro emitente'],
     ['fiscal_emitente_numero', 'S/N', 'string', 'Número emitente'],
-    ['fiscal_emitente_bairro', '', 'string', 'Bairro emitente'],
-    ['logo', '', 'text', 'URL da logo'],
-    ['imprimir_cupom', 'true', 'boolean', 'Imprimir cupom fiscal'],
-    ['juros_mora', '1.0', 'decimal', 'Juros de mora por dia (%)'],
-    ['backup_google_enabled', 'false', 'boolean', 'Backup automático para Google Drive habilitado'],
-    ['backup_google_frequency', '0 2 * * *', 'string', 'Frequência de backup para Google Drive'],
-    ['backup_google_client_id', '', 'string', 'Google Client ID para backup'],
-    ['backup_google_client_secret', '', 'string', 'Google Client Secret para backup'],
-    ['backup_google_redirect_uris', '[]', 'text', 'Google Redirect URIs para OAuth'],
-    ['backup_google_refresh_token', '', 'text', 'Google Refresh Token para backup']
+    ['fiscal_emitente_bairro', '', 'string', 'Bairro emitente']
   ];
 
   configs.forEach(config => {

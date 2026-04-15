@@ -212,14 +212,6 @@ function showMovimentacaoModal(movimentacao = null) {
                                 </select>
                             </div>
                             <div class="mb-3">
-                                <label class="form-label">Buscar compra por NF (opcional)</label>
-                                <div class="input-group">
-                                    <input type="text" class="form-control" id="nota_auxiliar" placeholder="Digite a nota para sugerir dados">
-                                    <button class="btn btn-outline-secondary" type="button" onclick="buscarCompraAuxiliarPorNota()">Buscar</button>
-                                </div>
-                                <small class="text-muted">Apenas como apoio. Compras já entram automaticamente no financeiro.</small>
-                            </div>
-                            <div class="mb-3">
                                 <label class="form-label">Descrição *</label>
                                 <input type="text" class="form-control" id="descricao" value="${movimentacao?.descricao || ''}">
                             </div>
@@ -280,27 +272,6 @@ function showMovimentacaoModal(movimentacao = null) {
     `;
     $('#modal-container').html(modalHtml);
     $('#movimentacaoModal').modal('show');
-}
-
-function buscarCompraAuxiliarPorNota() {
-    const nota = $('#nota_auxiliar').val().trim();
-    if (!nota) {
-        showNotification('Informe a nota para buscar.', 'warning');
-        return;
-    }
-    $.ajax({
-        url: `${API_URL}/financeiro/buscar-compra-por-nota/${encodeURIComponent(nota)}`,
-        method: 'GET'
-    }).done(function(compra) {
-        if (!$('#descricao').val()) $('#descricao').val(`Despesa vinculada à NF ${compra.nota_fiscal}`);
-        if (!$('#valor').val()) $('#valor').val(compra.total);
-        if (!$('#documento').val()) $('#documento').val(compra.nota_fiscal || '');
-        if (!$('#pessoa_nome').val()) $('#pessoa_nome').val(compra.fornecedor || '');
-        if (!$('#forma_pagamento').val()) $('#forma_pagamento').val(compra.forma_pagamento || '');
-        showNotification('Compra localizada. Dados sugeridos preenchidos.', 'success');
-    }).fail(function(xhr) {
-        showNotification(xhr.responseJSON?.error || 'Compra não encontrada para a nota informada.', 'warning');
-    });
 }
 
 function saveMovimentacao() {

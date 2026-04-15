@@ -18,12 +18,6 @@ function digitsOnly(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
-function xmlTagValue(xml, tag) {
-  const regex = new RegExp(`<${tag}>([\s\S]*?)<\/${tag}>`, 'i');
-  const match = xml.match(regex);
-  return match ? String(match[1]).trim() : '';
-}
-
 function createSlugCodigo(nome = '') {
   return String(nome)
     .normalize('NFD')
@@ -34,51 +28,9 @@ function createSlugCodigo(nome = '') {
     .toUpperCase();
 }
 
-function parseXmlNotaCompra(xml) {
-  const chaveMatch = xml.match(/Id="NFe(\d{44})"/i);
-  const fornecedor = xmlTagValue(xml, 'xNome');
-  const notaFiscal = xmlTagValue(xml, 'nNF');
-  const dataEmissao = xmlTagValue(xml, 'dhEmi') || xmlTagValue(xml, 'dEmi');
-  const total = Number(xmlTagValue(xml, 'vNF') || 0);
-  const detRegex = /<det\b[^>]*>([\s\S]*?)<\/det>/gi;
-  const itens = [];
-  let detMatch;
-  while ((detMatch = detRegex.exec(xml)) !== null) {
-    const bloco = detMatch[1];
-    const codigo = xmlTagValue(bloco, 'cProd') || xmlTagValue(bloco, 'cEAN') || '';
-    const descricao = xmlTagValue(bloco, 'xProd');
-    const unidade = xmlTagValue(bloco, 'uCom') || 'UN';
-    const quantidade = Number(xmlTagValue(bloco, 'qCom') || 0);
-    const precoUnitario = Number(xmlTagValue(bloco, 'vUnCom') || 0);
-    const subtotal = Number(xmlTagValue(bloco, 'vProd') || (quantidade * precoUnitario) || 0);
-    const ncm = xmlTagValue(bloco, 'NCM') || '';
-    itens.push({
-      codigo_barras: codigo,
-      produto_nome: descricao,
-      unidade,
-      quantidade,
-      preco_unitario: Number(precoUnitario.toFixed(2)),
-      subtotal: Number(subtotal.toFixed(2)),
-      margem_lucro: 30,
-      preco_venda_sugerido: Number((precoUnitario * 1.3).toFixed(2)),
-      ncm
-    });
-  }
-
-  return {
-    chave_acesso: chaveMatch ? chaveMatch[1] : '',
-    nota_fiscal: notaFiscal,
-    fornecedor,
-    data_compra: dataEmissao ? moment(dataEmissao).format('YYYY-MM-DD') : moment().format('YYYY-MM-DD'),
-    total: Number(total.toFixed(2)),
-    itens
-  };
-}
-
 function criarFinanceiroCompra(compra, callback) {
   const {
     id,
-    nota_fiscal,
     data_compra,
     fornecedor,
     total,
@@ -92,7 +44,7 @@ function criarFinanceiroCompra(compra, callback) {
 
   const qtdParcelas = Math.max(1, Number(parcelas) || 1);
   const valorTotal = Number(total) || 0;
-  const descricaoBase = `Compra NF ${nota_fiscal || id}${fornecedor ? ` - ${fornecedor}` : ''}`;
+  const descricaoBase = `Compra ${id}${fornecedor ? ` - ${fornecedor}` : ''}`;
   const vencimentoBase = toDate(data_vencimento, data_compra);
 
   db.run('DELETE FROM financeiro WHERE compra_id = ?', [id], (deleteErr) => {
@@ -116,7 +68,7 @@ function criarFinanceiroCompra(compra, callback) {
         'compra',
         payload.status,
         'compra',
-        nota_fiscal || null,
+        null,
         payload.vencimento,
         payload.numero_parcela,
         payload.total_parcelas,
@@ -314,50 +266,6 @@ function processarItensCompra(compraId, itens, fornecedor, done) {
   next();
 }
 
-router.post('/importar-xml', upload.single('xml'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'Envie um arquivo XML.' });
-  }
-
-  try {
-    const xml = req.file.buffer.toString('utf-8');
-    const nota = parseXmlNotaCompra(xml);
-    if (!nota.itens.length) {
-      return res.status(400).json({ error: 'Não encontrei itens válidos no XML.' });
-    }
-
-    const codigos = nota.itens.map(i => i.codigo_barras).filter(Boolean);
-    if (!codigos.length) {
-      return res.json(nota);
-    }
-
-    const placeholders = codigos.map(() => '?').join(',');
-    db.all(`SELECT * FROM produtos WHERE codigo IN (${placeholders}) OR codigo_barras IN (${placeholders})`, [...codigos, ...codigos], (err, produtos) => {
-      if (err) return res.status(500).json({ error: err.message });
-      const lista = produtos || [];
-      nota.itens = nota.itens.map(item => {
-        const produto = lista.find(p => [p.codigo, p.codigo_barras].includes(item.codigo_barras));
-        return produto ? {
-          ...item,
-          produto_id: produto.id,
-          produto_nome: produto.nome || item.produto_nome,
-          unidade: produto.unidade || item.unidade,
-          ncm: produto.ncm || item.ncm,
-          ultimo_preco_compra: Number(produto.preco_compra || 0),
-          margem_lucro: Number(produto.lucro_percentual || 30),
-          preco_venda_sugerido: Number((Number(produto.preco_compra || 0) * (1 + (Number(produto.lucro_percentual || 30) / 100)))).toFixed(2)
-        } : {
-          ...item,
-          ultimo_preco_compra: Number(item.preco_unitario || 0)
-        };
-      });
-      res.json(nota);
-    });
-  } catch (error) {
-    res.status(400).json({ error: `Erro ao ler XML: ${error.message}` });
-  }
-});
-
 router.get('/', (req, res) => {
   db.all(`
     SELECT c.*, 
@@ -368,14 +276,6 @@ router.get('/', (req, res) => {
   `, (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
-  });
-});
-
-router.get('/por-nota/:nota', (req, res) => {
-  db.get('SELECT * FROM compras WHERE nota_fiscal = ? ORDER BY id DESC LIMIT 1', [req.params.nota], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!row) return res.status(404).json({ error: 'Compra não encontrada.' });
-    res.json(row);
   });
 });
 
@@ -403,8 +303,6 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const {
-    nota_fiscal,
-    chave_acesso,
     data_compra,
     fornecedor,
     total,
@@ -433,12 +331,10 @@ router.post('/', (req, res) => {
     db.run('BEGIN TRANSACTION');
     db.run(`
       INSERT INTO compras (
-        nota_fiscal, chave_acesso, data_compra, fornecedor, total, status,
-        condicao_pagamento, forma_pagamento, data_vencimento, parcelas, valor_entrada, observacao, xml_importado_em
-      ) VALUES (?, ?, ?, ?, ?, 'concluida', ?, ?, ?, ?, ?, ?, ?)
+        data_compra, fornecedor, total, status,
+        condicao_pagamento, forma_pagamento, data_vencimento, parcelas, valor_entrada, observacao
+      ) VALUES (?, ?, ?, 'concluida', ?, ?, ?, ?, ?, ?)
     `, [
-      nota_fiscal || null,
-      digitsOnly(chave_acesso) || null,
       data_compra,
       fornecedor || null,
       totalNum,
@@ -447,8 +343,7 @@ router.post('/', (req, res) => {
       data_vencimento || (condicao === 'avista' ? data_compra : null),
       condicao === 'parcelado' || condicao === 'entrada_parcelado' ? qtdParcelas : 1,
       Number(valor_entrada) || 0,
-      observacao || null,
-      digitsOnly(chave_acesso) ? moment().format('YYYY-MM-DD HH:mm:ss') : null
+      observacao || null
     ], function(err) {
       if (err) {
         db.run('ROLLBACK');
@@ -464,7 +359,6 @@ router.post('/', (req, res) => {
 
         criarFinanceiroCompra({
           id: compraId,
-          nota_fiscal,
           data_compra,
           fornecedor,
           total: totalNum,

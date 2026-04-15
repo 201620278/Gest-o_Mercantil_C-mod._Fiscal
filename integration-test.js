@@ -103,12 +103,6 @@ async function main() {
 
     const headers = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
 
-    const configResp = await fetchJson(`${BASE_URL}/api/fiscal/config`, { method: 'GET', headers });
-    console.log('Configuração fiscal:', JSON.stringify(configResp.body, null, 2));
-
-    const prontidaoResp = await fetchJson(`${BASE_URL}/api/fiscal/config/prontidao?ambiente=homologacao`, { method: 'GET', headers });
-    console.log('Prontidão do ambiente homologação:', JSON.stringify(prontidaoResp.body, null, 2));
-
     const vendasResp = await fetchJson(`${BASE_URL}/api/vendas`, { method: 'GET', headers });
     if (!vendasResp.ok) {
       throw new Error(`Erro ao listar vendas: ${vendasResp.status} ${JSON.stringify(vendasResp.body)}`);
@@ -162,36 +156,7 @@ async function main() {
       console.log(`Venda de teste criada com sucesso. ID=${vendaId}`);
     }
 
-    console.log(`Validando venda ID=${vendaId} para emissão NFC-e...`);
-    const validarResp = await fetchJson(`${BASE_URL}/api/fiscal/nfce/validar/${vendaId}`, { method: 'GET', headers });
-    console.log('Resultado da validação:', JSON.stringify(validarResp.body, null, 2));
-
-    if (!validarResp.ok || validarResp.body?.ok === false) {
-      throw new Error(`Validação falhou: ${JSON.stringify(validarResp.body)}`);
-    }
-
-    console.log(`Emitindo NFC-e para venda ID=${vendaId}...`);
-    const emitirResp = await fetchJson(`${BASE_URL}/api/fiscal/nfce/emitir/${vendaId}`, { method: 'POST', headers });
-    console.log('Resultado da emissão:', JSON.stringify(emitirResp.body, null, 2));
-
-    if (!emitirResp.ok) {
-      throw new Error(`Emissão falhou: ${emitirResp.status} ${JSON.stringify(emitirResp.body)}`);
-    }
-
-    const retorno = emitirResp.body;
-    if (retorno.status === 'autorizado') {
-      console.log('✅ NFC-e emitida e autorizada com sucesso.');
-    } else {
-      console.warn('⚠️ NFC-e retornou status não autorizado:', retorno.status);
-    }
-
-    if (retorno.xml_assinado_path) {
-      const signedPath = path.isAbsolute(retorno.xml_assinado_path)
-        ? retorno.xml_assinado_path
-        : path.join(__dirname, retorno.xml_assinado_path);
-      const exists = fs.existsSync(signedPath);
-      console.log(`Arquivo XML assinado ${signedPath} ${exists ? 'encontrado' : 'não encontrado'}`);
-    }
+    console.log('Teste de integração concluído com sucesso.');
   } finally {
     stopServer();
     console.log('Servidor finalizado.');

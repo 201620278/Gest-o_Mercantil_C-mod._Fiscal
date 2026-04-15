@@ -175,27 +175,6 @@ router.get('/resumo', (req, res) => {
   });
 });
 
-router.get('/buscar-compra-por-nota/:nota', (req, res) => {
-  const { nota } = req.params;
-  db.get(`
-    SELECT id, nota_fiscal, fornecedor, total, data_compra, forma_pagamento, condicao_pagamento
-    FROM compras
-    WHERE nota_fiscal = ?
-    ORDER BY id DESC
-    LIMIT 1
-  `, [nota], (err, row) => {
-    if (err) {
-      res.status(500).json({ error: err.message });
-      return;
-    }
-    if (!row) {
-      res.status(404).json({ error: 'Compra não encontrada para a nota informada.' });
-      return;
-    }
-    res.json(row);
-  });
-});
-
 router.post('/', (req, res) => {
   const {
     tipo,
