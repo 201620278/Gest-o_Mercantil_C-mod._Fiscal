@@ -174,14 +174,14 @@ async function emitirPorVendaId(vendaId) {
       url: config.urls.autorizacao,
       loteXml,
       certificadoPath: config.certificadoPath,
-      certificadoSenha: config.certificadoSenha
+      certificadoSenha: config.certificadoSenha,
+      cUF: config.codigoUf || '23',
+      versaoDados: '4.00'
     });
 
     const raw = String(soapResponse.raw || soapResponse.message || '');
-
     if (raw.includes('<cStat>100</cStat>')) {
       status = 'autorizada';
-
       const protMatch = raw.match(/<nProt>(.*?)<\/nProt>/);
       if (protMatch) {
         soapResponse.protocolo = protMatch[1];
