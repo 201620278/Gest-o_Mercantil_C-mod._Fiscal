@@ -83,6 +83,15 @@ function xmlEscape(value) {
     .replace(/'/g, '&apos;');
 }
 
+function compactarXml(xml) {
+  return String(xml || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/>\s+</g, '><')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '')
+    .trim();
+}
+
 module.exports = {
   onlyDigits,
   padLeft,
@@ -93,5 +102,6 @@ module.exports = {
   gerarCodigoNumerico,
   gerarChaveAcesso,
   sha1Hex,
-  xmlEscape
+  xmlEscape,
+  compactarXml
 };

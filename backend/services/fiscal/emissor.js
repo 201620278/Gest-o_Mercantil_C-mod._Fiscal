@@ -4,6 +4,7 @@ const { carregarCertificadoPfx } = require('./certificateService');
 const { buildNfceXml } = require('./xmlBuilder');
 const { assinarXmlNfe } = require('./signer');
 const { montarLote, enviarLote } = require('./soapClient');
+const { compactarXml } = require('./utils');
 const { gerarDanfeHtml } = require('./danfe');
 
 function carregarVenda(vendaId) {
@@ -145,6 +146,7 @@ async function emitirPorVendaId(vendaId) {
   try {
     const certificado = carregarCertificadoPfx(config.certificadoPath, config.certificadoSenha);
     xmlAssinado = assinarXmlNfe(xmlBase.xmlSemAssinatura, certificado);
+    xmlAssinado = compactarXml(xmlAssinado);
   } catch (error) {
     assinaturaErro = error;
   }

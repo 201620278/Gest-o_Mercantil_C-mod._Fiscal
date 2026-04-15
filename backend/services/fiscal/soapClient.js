@@ -1,13 +1,14 @@
 const axios = require('axios');
 const https = require('https');
 const { carregarCertificadoPfx } = require('./certificateService');
+const { compactarXml } = require('./utils');
 
 function montarLote(xmlAssinado, idLote = '1') {
-  return `<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
-  <idLote>${idLote}</idLote>
-  <indSinc>1</indSinc>
-  ${xmlAssinado.replace('<?xml version="1.0" encoding="UTF-8"?>', '').trim()}
-</enviNFe>`;
+  const xmlLimpo = compactarXml(
+    xmlAssinado.replace('<?xml version="1.0" encoding="UTF-8"?>', '').trim()
+  );
+
+  return `<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>${idLote}</idLote><indSinc>1</indSinc>${xmlLimpo}</enviNFe>`;
 }
 
 function montarSoapEnvelop(loteXml, cUF = '23', versaoDados = '4.00') {
@@ -22,11 +23,7 @@ function montarSoapEnvelop(loteXml, cUF = '23', versaoDados = '4.00') {
     </nfeCabecMsg>
   </soap12:Header>
   <soap12:Body>
-    <nfeAutorizacaoLote xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
-      <nfeDadosMsg>
-        ${loteXml}
-      </nfeDadosMsg>
-    </nfeAutorizacaoLote>
+    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">${loteXml}</nfeDadosMsg>
   </soap12:Body>
 </soap12:Envelope>`;
 }
@@ -44,7 +41,7 @@ function criarHttpsAgentSefaz({ certificadoPath, certificadoSenha, url }) {
 
   return new https.Agent({
     key: certificado.privateKeyPem,
-    cert: certificado.certBundlePem,
+    cert: certificado.certBundlePem || certificado.certPem,
     rejectUnauthorized: false,
     minVersion: 'TLSv1.2',
     keepAlive: false,
@@ -68,7 +65,9 @@ async function enviarLote({
     };
   }
 
-  const envelope = montarSoapEnvelop(loteXml, cUF, versaoDados);
+  const envelope = compactarXml(
+    montarSoapEnvelop(loteXml, cUF, versaoDados)
+  );
 
   try {
     const httpsAgent = criarHttpsAgentSefaz({
@@ -78,7 +77,7 @@ async function enviarLote({
     });
 
     console.log('Enviando para SEFAZ URL:', url);
-    console.log('SOAP 1.2 com wrapper nfeAutorizacaoLote habilitado');
+    console.log('SOAP 1.2 sem wrapper + action explícita');
 
     const response = await axios.post(url, envelope, {
       httpsAgent,
@@ -108,6 +107,7 @@ async function enviarLote({
     console.error('ERRO STATUS HTTP:', error.response?.status || null);
     console.error('ERRO HEADERS:', error.response?.headers || null);
     console.error('ERRO RESPONSE:', error.response?.data || null);
+    console.error('SOAP ENVELOPE ENVIADO:\n', envelope);
 
     return {
       success: false,
