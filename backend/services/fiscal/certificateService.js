@@ -1,6 +1,19 @@
 const fs = require('fs');
 const forge = require('node-forge');
 
+function isCaCertificate(cert) {
+  const bc = cert.getExtension('basicConstraints');
+  return !!(bc && bc.cA === true);
+}
+
+function isSelfSigned(cert) {
+  try {
+    return cert.issuer.hash === cert.subject.hash;
+  } catch {
+    return false;
+  }
+}
+
 function carregarCertificadoPfx(certificadoPath, senha) {
   if (!certificadoPath) {
     throw new Error('Caminho do certificado não configurado.');
@@ -18,7 +31,7 @@ function carregarCertificadoPfx(certificadoPath, senha) {
   let privateKeyPem = '';
   let certPem = '';
   let certBase64 = '';
-  let certChainPem = '';
+  let certBundlePem = '';
 
   const keyBags =
     p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[
@@ -38,27 +51,24 @@ function carregarCertificadoPfx(certificadoPath, senha) {
     throw new Error('Nenhum certificado encontrado dentro do PFX.');
   }
 
-  const certificadosPem = certBags
+  const certs = certBags
     .filter((bag) => bag?.cert)
-    .map((bag) => forge.pki.certificateToPem(bag.cert));
+    .map((bag) => bag.cert);
 
-  certChainPem = certificadosPem.join('\n');
+  const certPrincipal =
+    certs.find((cert) => !isCaCertificate(cert)) || certs[0];
 
-  const certPrincipalBag =
-    certBags.find((bag) => {
-      const cert = bag.cert;
-      if (!cert) return false;
+  const intermediarios = certs.filter((cert) => {
+    if (cert === certPrincipal) return false;
+    return isCaCertificate(cert) && !isSelfSigned(cert);
+  });
 
-      const bc = cert.getExtension('basicConstraints');
-      return !(bc && bc.cA === true);
-    }) || certBags[0];
+  certPem = forge.pki.certificateToPem(certPrincipal);
+  certBase64 = forge.util.encode64(
+    forge.asn1.toDer(forge.pki.certificateToAsn1(certPrincipal)).getBytes()
+  );
 
-  if (certPrincipalBag?.cert) {
-    certPem = forge.pki.certificateToPem(certPrincipalBag.cert);
-    certBase64 = forge.util.encode64(
-      forge.asn1.toDer(forge.pki.certificateToAsn1(certPrincipalBag.cert)).getBytes()
-    );
-  }
+  certBundlePem = [certPem, ...intermediarios.map((c) => forge.pki.certificateToPem(c))].join('\n');
 
   if (!privateKeyPem || !certPem || !certBase64) {
     throw new Error('Não foi possível extrair chave privada e certificado do PFX.');
@@ -68,7 +78,7 @@ function carregarCertificadoPfx(certificadoPath, senha) {
     privateKeyPem,
     certPem,
     certBase64,
-    certChainPem
+    certBundlePem
   };
 }
 

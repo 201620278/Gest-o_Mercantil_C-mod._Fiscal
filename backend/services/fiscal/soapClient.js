@@ -3,8 +3,7 @@ const https = require('https');
 const { carregarCertificadoPfx } = require('./certificateService');
 
 function montarLote(xmlAssinado, idLote = '1') {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
+  return `<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00">
   <idLote>${idLote}</idLote>
   <indSinc>1</indSinc>
   ${xmlAssinado.replace('<?xml version="1.0" encoding="UTF-8"?>', '').trim()}
@@ -13,21 +12,23 @@ function montarLote(xmlAssinado, idLote = '1') {
 
 function montarSoapEnvelop(loteXml, cUF = '23', versaoDados = '4.00') {
   return `<?xml version="1.0" encoding="utf-8"?>
-<soap:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-               xmlns:xsd="http://www.w3.org/2001/XMLSchema"
-               xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Header>
+<soap12:Envelope xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xmlns:xsd="http://www.w3.org/2001/XMLSchema"
+                 xmlns:soap12="http://www.w3.org/2003/05/soap-envelope">
+  <soap12:Header>
     <nfeCabecMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
       <cUF>${cUF}</cUF>
       <versaoDados>${versaoDados}</versaoDados>
     </nfeCabecMsg>
-  </soap:Header>
-  <soap:Body>
-    <nfeDadosMsg xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
-      ${loteXml}
-    </nfeDadosMsg>
-  </soap:Body>
-</soap:Envelope>`;
+  </soap12:Header>
+  <soap12:Body>
+    <nfeAutorizacaoLote xmlns="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4">
+      <nfeDadosMsg>
+        ${loteXml}
+      </nfeDadosMsg>
+    </nfeAutorizacaoLote>
+  </soap12:Body>
+</soap12:Envelope>`;
 }
 
 function criarHttpsAgentSefaz({ certificadoPath, certificadoSenha, url }) {
@@ -43,7 +44,7 @@ function criarHttpsAgentSefaz({ certificadoPath, certificadoSenha, url }) {
 
   return new https.Agent({
     key: certificado.privateKeyPem,
-    cert: certificado.certChainPem || certificado.certPem,
+    cert: certificado.certBundlePem,
     rejectUnauthorized: false,
     minVersion: 'TLSv1.2',
     keepAlive: false,
@@ -77,7 +78,7 @@ async function enviarLote({
     });
 
     console.log('Enviando para SEFAZ URL:', url);
-    console.log('SOAP 1.1 habilitado');
+    console.log('SOAP 1.2 com wrapper nfeAutorizacaoLote habilitado');
 
     const response = await axios.post(url, envelope, {
       httpsAgent,
@@ -90,9 +91,8 @@ async function enviarLote({
         forcedJSONParsing: false
       },
       headers: {
-        'Content-Type': 'text/xml; charset=utf-8',
-        'SOAPAction': '"http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLote"',
-        'Accept': 'text/xml, application/xml, */*',
+        'Content-Type': 'application/soap+xml; charset=utf-8; action="http://www.portalfiscal.inf.br/nfe/wsdl/NFeAutorizacao4/nfeAutorizacaoLote"',
+        'Accept': 'application/soap+xml, text/xml, */*',
         'User-Agent': 'CDGESTAO-NFCE/1.0'
       }
     });
