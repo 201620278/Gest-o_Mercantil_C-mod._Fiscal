@@ -17,3 +17,6 @@ logs/
 
 # Build
 dist/
+
+backend/services/fiscal/debug/
+backend/storage/xml/debug-assinatura/

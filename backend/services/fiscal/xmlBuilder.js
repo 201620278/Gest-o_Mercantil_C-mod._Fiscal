@@ -90,6 +90,8 @@ function buildNfceXml({ config, venda, itens, numero }) {
   const vDesc = round2(venda.desconto || 0);
   let vNF = 0;
 
+  const descricaoHomologacao = 'NOTA FISCAL EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL';
+
   const dets = (itens || []).map((item, idx) => {
     const quantidade = Number(item.quantidade || 0);
     const valorUnitario = Number(item.preco_unitario || 0);
@@ -101,13 +103,16 @@ function buildNfceXml({ config, venda, itens, numero }) {
     const cest = onlyDigits(item.cest || item.produto_cest || '');
     const cEAN = onlyDigits(item.codigo_barras || item.produto_codigo_barras || '');
     const unidade = item.unidade || 'UN';
+    const xProd = Number(config.ambiente) === 2 && idx === 0
+      ? descricaoHomologacao
+      : item.produto_nome || 'PRODUTO';
 
     return `
       <det nItem="${idx + 1}">
         <prod>
           <cProd>${xmlEscape(String(item.produto_id || idx + 1))}</cProd>
           <cEAN>${xmlEscape(cEAN || 'SEM GTIN')}</cEAN>
-          <xProd>${xmlEscape(item.produto_nome || 'PRODUTO')}</xProd>
+          <xProd>${xmlEscape(xProd)}</xProd>
           <NCM>${ncm}</NCM>
           ${cest ? `<CEST>${cest}</CEST>` : ''}
           <CFOP>${cfop}</CFOP>
