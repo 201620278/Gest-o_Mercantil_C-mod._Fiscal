@@ -1,11 +1,23 @@
+const fs = require('fs');
+const path = require('path');
 const db = require('../../database');
 const { getFiscalConfig, incrementaNumeroFiscal } = require('./configService');
 const { carregarCertificadoPfx } = require('./certificateService');
 const { buildNfceXml } = require('./xmlBuilder');
-const { assinarXmlNfe } = require('./signer');
+const { assinarNFe } = require('./signer');
 const { montarLote, enviarLote } = require('./soapClient');
-const { compactarXml } = require('./utils');
 const { gerarDanfeHtml } = require('./danfe');
+
+console.log('EMISSOR REAL:', __filename);
+
+function salvarDebug(nome, conteudo) {
+  const pasta = path.join(__dirname, 'debug');
+  if (!fs.existsSync(pasta)) {
+    fs.mkdirSync(pasta, { recursive: true });
+  }
+
+  fs.writeFileSync(path.join(pasta, nome), conteudo, 'utf8');
+}
 
 function carregarVenda(vendaId) {
   return new Promise((resolve, reject) => {
@@ -70,6 +82,7 @@ function salvarNota(payload) {
 }
 
 async function emitirPorVendaId(vendaId) {
+  console.log('ENTROU NO EMISSOR FISCAL');
   const { venda, itens } = await carregarVenda(vendaId);
 
   const existe = await new Promise((resolve, reject) => {
@@ -144,11 +157,48 @@ async function emitirPorVendaId(vendaId) {
   let assinaturaErro = null;
 
   try {
+    salvarDebug('01-xml-nfe-original.xml', xmlBase.xmlSemAssinatura);
+
     const certificado = carregarCertificadoPfx(config.certificadoPath, config.certificadoSenha);
-    xmlAssinado = assinarXmlNfe(xmlBase.xmlSemAssinatura, certificado);
-    xmlAssinado = compactarXml(xmlAssinado);
+    try {
+      console.log('ANTES DE CHAMAR assinarNFe');
+      console.log('TIPO xmlNfe:', typeof xmlBase.xmlSemAssinatura);
+      console.log('TAMANHO xmlNfe:', xmlBase.xmlSemAssinatura ? xmlBase.xmlSemAssinatura.length : 0);
+      console.log('CHAVE PRIVADA OK:', !!certificado.privateKeyPem);
+      console.log('CERT PEM OK:', !!certificado.certPem);
+
+      salvarDebug('01b-antes-assinatura.txt', [
+        `TIPO xmlNfe: ${typeof xmlBase.xmlSemAssinatura}`,
+        `TAMANHO xmlNfe: ${xmlBase.xmlSemAssinatura ? xmlBase.xmlSemAssinatura.length : 0}`,
+        `CHAVE PRIVADA OK: ${!!certificado.privateKeyPem}`,
+        `CERT PEM OK: ${!!certificado.certPem}`
+      ].join('\n'));
+
+      xmlAssinado = assinarNFe(
+        xmlBase.xmlSemAssinatura,
+        certificado.privateKeyPem,
+        certificado.certPem
+      );
+
+      console.log('DEPOIS DE CHAMAR assinarNFe');
+      console.log('TAMANHO xmlAssinado:', xmlAssinado ? xmlAssinado.length : 0);
+
+      salvarDebug('01c-depois-assinatura.txt', `TAMANHO xmlAssinado: ${xmlAssinado ? xmlAssinado.length : 0}`);
+    } catch (erro) {
+      console.error('ERRO AO CHAMAR assinarNFe:', erro);
+      throw erro;
+    }
+
+    salvarDebug('02-xml-nfe-assinado.xml', xmlAssinado);
   } catch (error) {
     assinaturaErro = error;
+
+    salvarDebug(
+      '99-erro-assinatura-emissor.txt',
+      error && error.stack ? error.stack : String(error)
+    );
+
+    console.error('ERRO FINAL CAPTURADO NO EMISSOR:', error);
   }
 
   const danfeHtml = await gerarDanfeHtml({
@@ -180,6 +230,9 @@ async function emitirPorVendaId(vendaId) {
       cUF: config.codigoUf || '23',
       versaoDados: '4.00'
     });
+
+    salvarDebug('05-soap-resposta.json', JSON.stringify(soapResponse, null, 2));
+    salvarDebug('06-soap-retorno.xml', String(soapResponse.raw || soapResponse.message || ''));
 
     const raw = String(soapResponse.raw || soapResponse.message || '');
     if (raw.includes('<cStat>100</cStat>')) {

@@ -1,31 +1,95 @@
+const fs = require('fs');
+const path = require('path');
 const { SignedXml } = require('xml-crypto');
 
-function assinarXmlNfe(xml, certificado) {
-  const sig = new SignedXml();
+console.log('SIGNER REAL:', __filename);
 
-  sig.privateKey = certificado.privateKeyPem;
-  sig.signatureAlgorithm = 'http://www.w3.org/2001/04/xmldsig-more#rsa-sha256';
-  sig.canonicalizationAlgorithm = 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315';
+function salvarDebug(nome, conteudo) {
+  const pasta = path.join(__dirname, '../../../storage/xml/debug-assinatura');
 
-  sig.getKeyInfoContent = () =>
-    `<X509Data><X509Certificate>${certificado.certBase64}</X509Certificate></X509Data>`;
+  if (!fs.existsSync(pasta)) {
+    fs.mkdirSync(pasta, { recursive: true });
+  }
 
-  sig.getCertFromKeyInfo = () => null;
-
-  sig.addReference({
-    xpath: "//*[local-name(.)='infNFe']",
-    transforms: [
-      'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
-      'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
-    ],
-    digestAlgorithm: 'http://www.w3.org/2001/04/xmlenc#sha256'
-  });
-
-  sig.computeSignature(xml, {
-    location: { reference: "//*[local-name(.)='infNFe']", action: 'after' }
-  });
-
-  return sig.getSignedXml();
+  fs.writeFileSync(path.join(pasta, nome), String(conteudo ?? ''), 'utf8');
 }
 
-module.exports = { assinarXmlNfe };
+function extrairIdInfNFe(xml) {
+  const match = String(xml || '').match(/<infNFe[^>]*\sId="([^"]+)"/);
+
+  if (!match || !match[1]) {
+    throw new Error('Id da infNFe não encontrado no XML.');
+  }
+
+  return match[1];
+}
+
+function limparCertificadoBase64(certPem) {
+  return String(certPem || '')
+    .replace(/-----BEGIN CERTIFICATE-----/g, '')
+    .replace(/-----END CERTIFICATE-----/g, '')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '')
+    .trim();
+}
+
+function assinarNFe(xml, chavePrivadaPem, certPem) {
+  try {
+    salvarDebug('01-xml-original.xml', xml);
+
+    const idInfNFe = extrairIdInfNFe(xml);
+    const certBase64 = limparCertificadoBase64(certPem);
+
+    const sig = new SignedXml({
+      privateKey: chavePrivadaPem,
+      idAttribute: 'Id',
+      signatureAlgorithm: 'http://www.w3.org/2000/09/xmldsig#rsa-sha1',
+      canonicalizationAlgorithm: 'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
+    });
+
+    sig.getKeyInfoContent = () =>
+      `<X509Data><X509Certificate>${certBase64}</X509Certificate></X509Data>`;
+
+    sig.getCertFromKeyInfo = () => null;
+
+    sig.addReference({
+      xpath: `//*[@Id='${idInfNFe}']`,
+      transforms: [
+        'http://www.w3.org/2000/09/xmldsig#enveloped-signature',
+        'http://www.w3.org/TR/2001/REC-xml-c14n-20010315'
+      ],
+      digestAlgorithm: 'http://www.w3.org/2000/09/xmldsig#sha1'
+    });
+
+    console.log('ANTES DO computeSignature');
+
+    sig.computeSignature(xml, {
+      location: {
+        reference: "//*[local-name(.)='infNFe']",
+        action: 'after'
+      }
+    });
+
+    console.log('DEPOIS DO computeSignature');
+
+    const xmlAssinado = sig.getSignedXml();
+
+    salvarDebug('02-xml-assinado.xml', xmlAssinado);
+
+    if (!xmlAssinado.includes('<Signature')) {
+      throw new Error('XML assinado ficou sem Signature.');
+    }
+
+    return xmlAssinado;
+  } catch (erro) {
+    salvarDebug(
+      '99-erro-assinatura.txt',
+      erro && erro.stack ? erro.stack : String(erro)
+    );
+    throw erro;
+  }
+}
+
+module.exports = {
+  assinarNFe
+};

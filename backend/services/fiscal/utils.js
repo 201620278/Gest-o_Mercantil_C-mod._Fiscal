@@ -92,6 +92,27 @@ function compactarXml(xml) {
     .trim();
 }
 
+function normalizarXmlParaSefaz(xml) {
+  return String(xml || '')
+    .replace(/^\uFEFF/, '')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '')
+    .replace(/\t/g, '')
+    .replace(/>\s+</g, '><')
+    .trim();
+}
+
+function limparCertificadoBase64(certBase64) {
+  return String(certBase64 || '')
+    .replace(/-----BEGIN CERTIFICATE-----/g, '')
+    .replace(/-----END CERTIFICATE-----/g, '')
+    .replace(/\r/g, '')
+    .replace(/\n/g, '')
+    .replace(/\t/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+}
+
 module.exports = {
   onlyDigits,
   padLeft,
@@ -103,5 +124,7 @@ module.exports = {
   gerarChaveAcesso,
   sha1Hex,
   xmlEscape,
-  compactarXml
+  compactarXml,
+  normalizarXmlParaSefaz,
+  limparCertificadoBase64
 };

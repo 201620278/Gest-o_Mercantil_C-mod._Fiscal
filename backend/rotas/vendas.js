@@ -104,6 +104,9 @@ router.get('/:id', (req, res) => {
 
 // NOVA LÓGICA: Suporte a venda a prazo
 router.post('/', (req, res) => {
+  console.log('ENTROU NA ROTA DE EMISSAO NFC-E');
+  console.log('DADOS RECEBIDOS PARA EMISSAO:', req.body);
+
   const { cliente_id, total, desconto, forma_pagamento, itens, parcelas, primeiro_vencimento, forcar, emitir_fiscal } = req.body;
   const totalNum = Number(total);
 

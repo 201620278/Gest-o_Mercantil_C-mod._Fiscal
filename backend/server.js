@@ -1,5 +1,8 @@
 const path = require('path');
 
+console.log('SERVER RODANDO DE:', process.cwd());
+console.log('SERVER FILE:', __filename);
+
 const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');

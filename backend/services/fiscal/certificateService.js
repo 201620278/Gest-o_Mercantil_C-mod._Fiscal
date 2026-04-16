@@ -14,6 +14,14 @@ function isSelfSigned(cert) {
   }
 }
 
+function bytesToHexSafe(value) {
+  try {
+    return value ? forge.util.bytesToHex(value) : null;
+  } catch {
+    return null;
+  }
+}
+
 function carregarCertificadoPfx(certificadoPath, senha) {
   if (!certificadoPath) {
     throw new Error('Caminho do certificado não configurado.');
@@ -38,9 +46,19 @@ function carregarCertificadoPfx(certificadoPath, senha) {
       forge.pki.oids.pkcs8ShroudedKeyBag
     ] || [];
 
-  if (keyBags[0]?.key) {
-    privateKeyPem = forge.pki.privateKeyToPem(keyBags[0].key);
+  if (!keyBags.length || !keyBags[0]?.key) {
+    throw new Error('Chave privada não encontrada no PFX.');
   }
+
+  const keyBag = keyBags[0];
+  privateKeyPem = forge.pki.privateKeyToPem(keyBag.key);
+
+  const keyLocalKeyId =
+    keyBag.attributes &&
+    keyBag.attributes.localKeyId &&
+    keyBag.attributes.localKeyId[0]
+      ? bytesToHexSafe(keyBag.attributes.localKeyId[0])
+      : null;
 
   const certBags =
     p12.getBags({ bagType: forge.pki.oids.certBag })[
@@ -51,22 +69,44 @@ function carregarCertificadoPfx(certificadoPath, senha) {
     throw new Error('Nenhum certificado encontrado dentro do PFX.');
   }
 
-  const certs = certBags
-    .filter((bag) => bag?.cert)
-    .map((bag) => bag.cert);
+  const certs = certBags.filter((bag) => bag?.cert);
 
-  const certPrincipal =
-    certs.find((cert) => !isCaCertificate(cert)) || certs[0];
+  let certBagFolha = null;
 
-  const intermediarios = certs.filter((cert) => {
-    if (cert === certPrincipal) return false;
-    return isCaCertificate(cert) && !isSelfSigned(cert);
-  });
+  if (keyLocalKeyId) {
+    certBagFolha = certs.find((bag) => {
+      const certLocalKeyId =
+        bag.attributes &&
+        bag.attributes.localKeyId &&
+        bag.attributes.localKeyId[0]
+          ? bytesToHexSafe(bag.attributes.localKeyId[0])
+          : null;
 
-  certPem = forge.pki.certificateToPem(certPrincipal);
+      return certLocalKeyId && certLocalKeyId === keyLocalKeyId;
+    });
+  }
+
+  if (!certBagFolha) {
+    certBagFolha = certs.find((bag) => {
+      const cert = bag.cert;
+      if (!cert) return false;
+      return !isCaCertificate(cert);
+    }) || certs[0];
+  }
+
+  if (!certBagFolha || !certBagFolha.cert) {
+    throw new Error('Certificado folha não encontrado no PFX.');
+  }
+
+  certPem = forge.pki.certificateToPem(certBagFolha.cert);
   certBase64 = forge.util.encode64(
-    forge.asn1.toDer(forge.pki.certificateToAsn1(certPrincipal)).getBytes()
+    forge.asn1.toDer(forge.pki.certificateToAsn1(certBagFolha.cert)).getBytes()
   );
+
+  const intermediarios = certs
+    .filter((bag) => bag.cert && bag.cert !== certBagFolha.cert)
+    .map((bag) => bag.cert)
+    .filter((cert) => isCaCertificate(cert) && !isSelfSigned(cert));
 
   certBundlePem = [certPem, ...intermediarios.map((c) => forge.pki.certificateToPem(c))].join('\n');
 

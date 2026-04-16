@@ -1,0 +1,4 @@
+TIPO xmlNfe: string
+TAMANHO xmlNfe: 3073
+CHAVE PRIVADA OK: true
+CERT PEM OK: true

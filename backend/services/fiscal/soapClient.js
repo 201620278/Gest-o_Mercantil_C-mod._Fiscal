@@ -1,12 +1,33 @@
+const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 const https = require('https');
 const { carregarCertificadoPfx } = require('./certificateService');
 const { compactarXml } = require('./utils');
 
+function salvarDebug(nome, conteudo) {
+  const pasta = path.join(__dirname, 'debug');
+  if (!fs.existsSync(pasta)) {
+    fs.mkdirSync(pasta, { recursive: true });
+  }
+  fs.writeFileSync(path.join(pasta, nome), conteudo, 'utf8');
+}
+
+function validarXmlAntesDeEnviar(xml) {
+  if (!xml) {
+    throw new Error('XML vazio antes do envio.');
+  }
+
+  const matchCert = xml.match(/<X509Certificate>(.*?)<\/X509Certificate>/);
+  if (matchCert && /\s/.test(matchCert[1])) {
+    throw new Error('X509Certificate contém espaços ou quebras internas.');
+  }
+
+  return true;
+}
+
 function montarLote(xmlAssinado, idLote = '1') {
-  const xmlLimpo = compactarXml(
-    xmlAssinado.replace('<?xml version="1.0" encoding="UTF-8"?>', '').trim()
-  );
+  const xmlLimpo = xmlAssinado.replace('<?xml version="1.0" encoding="UTF-8"?>', '');
 
   return `<enviNFe xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><idLote>${idLote}</idLote><indSinc>1</indSinc>${xmlLimpo}</enviNFe>`;
 }
@@ -65,9 +86,11 @@ async function enviarLote({
     };
   }
 
-  const envelope = compactarXml(
-    montarSoapEnvelop(loteXml, cUF, versaoDados)
-  );
+  const envelope = montarSoapEnvelop(loteXml, cUF, versaoDados);
+
+  validarXmlAntesDeEnviar(envelope);
+  salvarDebug('03-xml-lote-enviNFe.xml', loteXml);
+  salvarDebug('04-soap-enviado.xml', envelope);
 
   try {
     const httpsAgent = criarHttpsAgentSefaz({
