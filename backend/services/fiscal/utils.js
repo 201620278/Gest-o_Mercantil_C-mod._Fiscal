@@ -86,9 +86,10 @@ function xmlEscape(value) {
 function compactarXml(xml) {
   return String(xml || '')
     .replace(/^\uFEFF/, '')
-    .replace(/>\s+</g, '><')
     .replace(/\r/g, '')
     .replace(/\n/g, '')
+    .replace(/\t/g, '')
+    .replace(/>\s+</g, '><')
     .trim();
 }
 

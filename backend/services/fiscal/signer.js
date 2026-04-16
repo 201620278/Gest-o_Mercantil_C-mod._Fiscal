@@ -80,7 +80,11 @@ function assinarNFe(xml, chavePrivadaPem, certPem) {
       throw new Error('XML assinado ficou sem Signature.');
     }
 
-    return xmlAssinado;
+    const xmlAssinadoSemDeclaracao = String(xmlAssinado || '')
+      .replace(/^\s*<\?xml[^>]*\?>\s*/i, '')
+      .trim();
+
+    return xmlAssinadoSemDeclaracao;
   } catch (erro) {
     salvarDebug(
       '99-erro-assinatura.txt',

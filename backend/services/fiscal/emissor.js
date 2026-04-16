@@ -6,6 +6,7 @@ const { carregarCertificadoPfx } = require('./certificateService');
 const { buildNfceXml } = require('./xmlBuilder');
 const { assinarNFe } = require('./signer');
 const { montarLote, enviarLote } = require('./soapClient');
+const { compactarXml } = require('./utils');
 const { gerarDanfeHtml } = require('./danfe');
 
 console.log('EMISSOR REAL:', __filename);
@@ -153,7 +154,7 @@ async function emitirPorVendaId(vendaId) {
   }
 
   const xmlBase = buildNfceXml({ config, venda, itens, numero });
-  let xmlAssinado = xmlBase.xmlSemAssinatura;
+  let xmlAssinado;
   let assinaturaErro = null;
 
   try {
@@ -174,8 +175,11 @@ async function emitirPorVendaId(vendaId) {
         `CERT PEM OK: ${!!certificado.certPem}`
       ].join('\n'));
 
+      const xmlParaAssinar = compactarXml(xmlBase.xmlSemAssinatura);
+      salvarDebug('01a-xml-nfe-compactado-antes-assinatura.xml', xmlParaAssinar);
+
       xmlAssinado = assinarNFe(
-        xmlBase.xmlSemAssinatura,
+        xmlParaAssinar,
         certificado.privateKeyPem,
         certificado.certPem
       );

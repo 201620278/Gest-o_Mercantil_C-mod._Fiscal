@@ -1,20 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <NFe xmlns="http://www.portalfiscal.inf.br/nfe">
-  <infNFe versao="4.00" Id="NFe23260465957340000150650010000000411045881314">
+  <infNFe versao="4.00" Id="NFe23260465957340000150650010000000441904681882">
     <ide>
       <cUF>23</cUF>
-      <cNF>04588131</cNF>
+      <cNF>90468188</cNF>
       <natOp>VENDA NFC-E</natOp>
       <mod>65</mod>
       <serie>1</serie>
-      <nNF>41</nNF>
-      <dhEmi>2026-04-16T00:31:17-03:00</dhEmi>
+      <nNF>44</nNF>
+      <dhEmi>2026-04-16T00:46:02-03:00</dhEmi>
       <tpNF>1</tpNF>
       <idDest>1</idDest>
       <cMunFG>2307304</cMunFG>
       <tpImp>4</tpImp>
       <tpEmis>1</tpEmis>
-      <cDV>4</cDV>
+      <cDV>2</cDV>
       <tpAmb>2</tpAmb>
       <finNFe>1</finNFe>
       <indFinal>1</indFinal>
@@ -107,7 +107,7 @@
       <modFrete>9</modFrete>
     </transp>
     <pag>
-      <detPag><indPag>0</indPag><tPag>17</tPag><vPag>3.19</vPag></detPag>
+      <detPag><indPag>0</indPag><tPag>01</tPag><vPag>3.19</vPag></detPag>
     </pag>
     <infAdic>
       <infCpl>EMITIDA EM AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL</infCpl>
